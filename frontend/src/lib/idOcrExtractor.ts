@@ -294,3 +294,4 @@ export async function extractDetailsFromIdImage(
 
   return parseIndianIdText(result.data.text || "")
 }
+

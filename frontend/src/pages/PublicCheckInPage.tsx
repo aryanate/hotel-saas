@@ -36,12 +36,15 @@ interface PublicCheckInInfoDto {
 }
 
 const checkInSchema = z.object({
-  fullName: z.string().min(2, "Full name is required"),
-  mobile: z.string().min(10, "Valid 10-digit mobile number is required"),
-  email: z.string().email("Valid email required").optional().or(z.literal("")),
-  address: z.string().min(5, "Residential address is required"),
+  fullName: z.string().trim().min(2, "Full name is required"),
+  mobile: z
+    .string()
+    .trim()
+    .regex(/^[0-9+\-\s]{10,15}$/, "Valid 10-digit mobile number is required"),
+  email: z.string().trim().email("Valid email required").optional().or(z.literal("")),
+  address: z.string().trim().optional().or(z.literal("")),
   idType: z.string().min(1, "Please select ID Type"),
-  idNumber: z.string().min(4, "ID Number is required"),
+  idNumber: z.string().trim().min(4, "ID Number is required"),
   declaration: z.boolean().refine((val) => val === true, {
     message: "You must accept the terms and declaration",
   }),
@@ -437,10 +440,12 @@ export function PublicCheckInPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="address">Residential Address *</Label>
+                <Label htmlFor="address">
+                  Residential Address <span className="text-xs font-normal text-muted-foreground">(Optional — auto-filled if on ID)</span>
+                </Label>
                 <Input
                   id="address"
-                  placeholder="Flat / House No., Area, City, State"
+                  placeholder="Flat / House No., Area, City, State (optional)"
                   {...register("address")}
                 />
                 {errors.address && <p className="text-xs text-destructive">{errors.address.message}</p>}

@@ -82,6 +82,39 @@ export function CheckInPendingPage() {
     },
   })
 
+  const openReviewModal = (session: CheckInSession) => {
+    setSelectedSession(session)
+    const needsRoom = !session.roomNumbers || session.roomNumbers.length === 0
+    if (needsRoom && availableRooms.length > 0) {
+      setSelectedRoomId(availableRooms[0].id)
+    } else {
+      setSelectedRoomId("")
+    }
+    setDocModalOpen(true)
+  }
+
+  const handleCardApprove = (session: CheckInSession) => {
+    const hasAssignedRoom = session.roomNumbers && session.roomNumbers.length > 0
+    if (hasAssignedRoom) {
+      approveMutation.mutate({ id: session.id })
+    } else {
+      openReviewModal(session)
+    }
+  }
+
+  const handleModalApprove = () => {
+    if (!selectedSession) return
+    const hasAssignedRoom = selectedSession.roomNumbers && selectedSession.roomNumbers.length > 0
+    if (!hasAssignedRoom && availableRooms.length > 0 && !selectedRoomId) {
+      toast({ title: "Please select a room to assign before approving", variant: "destructive" })
+      return
+    }
+    approveMutation.mutate({
+      id: selectedSession.id,
+      roomId: selectedRoomId || undefined,
+    })
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -125,11 +158,11 @@ export function CheckInPendingPage() {
                     </p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Arrival:</span>
+                    <span className="text-muted-foreground">Room:</span>
                     <p className="font-semibold">
-                      {session.checkInDate
-                        ? new Date(session.checkInDate).toLocaleDateString()
-                        : (session.booking?.checkInDate || "Today")}
+                      {session.roomNumbers && session.roomNumbers.length > 0
+                        ? `Room ${session.roomNumbers.join(", ")}`
+                        : "Needs Assignment"}
                     </p>
                   </div>
                 </div>
@@ -139,12 +172,9 @@ export function CheckInPendingPage() {
                     variant="outline"
                     size="sm"
                     className="w-full text-xs"
-                    onClick={() => {
-                      setSelectedSession(session)
-                      setDocModalOpen(true)
-                    }}
+                    onClick={() => openReviewModal(session)}
                   >
-                    <FileText className="h-3.5 w-3.5 mr-1 text-primary" /> View Uploaded ID & KYC
+                    <FileText className="h-3.5 w-3.5 mr-1 text-primary" /> View Uploaded ID &amp; Assign Room
                   </Button>
                 </div>
               </div>
@@ -161,10 +191,13 @@ export function CheckInPendingPage() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => approveMutation.mutate({ id: session.id })}
+                  onClick={() => handleCardApprove(session)}
                   disabled={approveMutation.isPending}
                 >
-                  <Check className="h-4 w-4 mr-1" /> Approve & Check In
+                  <Check className="h-4 w-4 mr-1" />{" "}
+                  {session.roomNumbers && session.roomNumbers.length > 0
+                    ? "Approve & Check In"
+                    : "Assign Room & Approve"}
                 </Button>
               </div>
             </div>
@@ -236,22 +269,32 @@ export function CheckInPendingPage() {
               )}
             </div>
 
-            {(!selectedSession?.roomNumbers || selectedSession.roomNumbers.length === 0) && availableRooms.length > 0 && (
+            {selectedSession?.roomNumbers && selectedSession.roomNumbers.length > 0 ? (
+              <div className="p-2.5 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+                Pre-assigned Room: <strong>Room {selectedSession.roomNumbers.join(", ")}</strong>
+              </div>
+            ) : availableRooms.length > 0 ? (
               <div className="space-y-1.5">
-                <Label htmlFor="assignRoom" className="text-xs">Assign Room (Optional for Walk-In)</Label>
+                <Label htmlFor="assignRoom" className="text-xs font-semibold">
+                  Assign Room *
+                </Label>
                 <select
                   id="assignRoom"
                   value={selectedRoomId}
                   onChange={(e) => setSelectedRoomId(e.target.value)}
                   className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs"
                 >
-                  <option value="">-- Assign Later --</option>
+                  <option value="">-- Select Available Room --</option>
                   {availableRooms.map((r) => (
                     <option key={r.id} value={r.id}>
                       Room {r.roomNumber} — {r.roomTypeName || "Standard"} (₹{r.pricePerNight}/night)
                     </option>
                   ))}
                 </select>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                No rooms currently marked Available — guest will be checked in without room assignment.
               </div>
             )}
 
@@ -264,16 +307,14 @@ export function CheckInPendingPage() {
               Close
             </Button>
             <Button
-              onClick={() =>
-                selectedSession &&
-                approveMutation.mutate({
-                  id: selectedSession.id,
-                  roomId: selectedRoomId || undefined,
-                })
-              }
+              onClick={handleModalApprove}
               disabled={approveMutation.isPending}
             >
-              Approve Identification
+              {approveMutation.isPending
+                ? "Approving..."
+                : selectedSession?.roomNumbers && selectedSession.roomNumbers.length > 0
+                  ? "Approve & Check In"
+                  : "Approve & Assign Room"}
             </Button>
           </DialogFooter>
         </DialogContent>

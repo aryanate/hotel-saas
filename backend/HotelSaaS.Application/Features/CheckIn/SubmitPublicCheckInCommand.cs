@@ -198,6 +198,7 @@ public class SubmitPublicCheckInCommandHandler :
         if (guest != null)
         {
             guest.FullName = request.FullName;
+            if (!string.IsNullOrWhiteSpace(request.Mobile)) guest.Mobile = request.Mobile;
             if (!string.IsNullOrWhiteSpace(request.Email)) guest.Email = request.Email;
             if (!string.IsNullOrWhiteSpace(request.Address)) guest.Address = request.Address;
             guest.MarketingConsent = request.MarketingConsent;

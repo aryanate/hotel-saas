@@ -95,6 +95,7 @@ public class PublicCheckInController : ControllerBase
         {
             Token = token,
             FullName = request.FullName,
+            Mobile = request.Mobile,
             Email = request.Email,
             Address = request.Address,
             DocumentType = request.DocumentType,
@@ -134,6 +135,7 @@ public class SubmitCheckInJsonRequest
 public class SubmitCheckInRequest
 {
     public string FullName { get; set; } = string.Empty;
+    public string? Mobile { get; set; }
     public string? Email { get; set; }
     public string? Address { get; set; }
     public DocumentType DocumentType { get; set; } = DocumentType.Other;
