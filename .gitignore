@@ -38,6 +38,9 @@ frontend/.vite/
 # TypeScript build info
 *.tsbuildinfo
 
+# Tesseract local test artifacts
+*.traineddata
+
 # ===========================
 # OS / Editor
 # ===========================
