@@ -14,9 +14,13 @@ import {
   BookmarkCheck,
   Sparkles,
   ScanLine,
+  FileText,
+  Plus,
+  X,
+  Lock,
 } from "lucide-react"
 import { get, apiClient } from "@/services/api"
-import { extractDetailsFromIdImage } from "@/lib/idOcrExtractor"
+import { extractDetailsFromFiles, PdfPasswordRequiredError } from "@/lib/idOcrExtractor"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -55,12 +59,16 @@ type CheckInFormValues = z.infer<typeof checkInSchema>
 
 export function PublicCheckInPage() {
   const { token } = useParams<{ token: string }>()
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(false)
+  const [scanLabel, setScanLabel] = useState("Reading details from ID...")
   const [scanProgress, setScanProgress] = useState(0)
   const [extractedSummary, setExtractedSummary] = useState<string[]>([])
   const [scanNotice, setScanNotice] = useState<string | null>(null)
+  const [lockedPdfName, setLockedPdfName] = useState<string | null>(null)
+  const [pdfPasswordInput, setPdfPasswordInput] = useState("")
+  const [pdfPasswords, setPdfPasswords] = useState<Record<string, string>>({})
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -98,77 +106,92 @@ export function PublicCheckInPage() {
   const currentIdType = watch("idType")
 
   useEffect(() => {
+    const urls = selectedFiles.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : ""))
+    setPreviewUrls(urls)
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      urls.forEach((u) => {
+        if (u) URL.revokeObjectURL(u)
+      })
     }
-  }, [previewUrl])
+  }, [selectedFiles])
 
-  const runIdOcr = async (file: File, mergeOnly: boolean) => {
-    if (!file.type.startsWith("image/")) {
-      setScanNotice("PDF attached — please verify your details below.")
-      return
-    }
+  const runExtraction = async (filesToScan: File[], passwordsMap: Record<string, string>, overwriteExisting: boolean) => {
+    if (filesToScan.length === 0) return
 
     setIsScanning(true)
+    setScanLabel("Reading details from ID...")
     setScanProgress(5)
     setScanNotice(null)
-    try {
-      const extracted = await extractDetailsFromIdImage(file, (pct) => setScanProgress(pct))
-      const filled: string[] = []
+    setLockedPdfName(null)
 
-      if (extracted.idType && (!mergeOnly || !getValues("idNumber"))) {
+    try {
+      const extracted = await extractDetailsFromFiles(filesToScan, passwordsMap, (lbl, pct) => {
+        setScanLabel(lbl)
+        setScanProgress(pct)
+      })
+
+      const filled: string[] = []
+      if (extracted.idType && (overwriteExisting || !getValues("idNumber"))) {
         setValue("idType", extracted.idType, { shouldValidate: true })
         filled.push("ID Type")
       }
-      if (extracted.idNumber && (!mergeOnly || !getValues("idNumber"))) {
+      if (extracted.idNumber && (overwriteExisting || !getValues("idNumber"))) {
         setValue("idNumber", extracted.idNumber, { shouldValidate: true })
         filled.push("ID Number")
       }
-      if (extracted.fullName && (!mergeOnly || !getValues("fullName"))) {
+      if (extracted.fullName && (overwriteExisting || !getValues("fullName"))) {
         setValue("fullName", extracted.fullName, { shouldValidate: true })
         filled.push("Full Name")
       }
-      if (extracted.mobile && (!mergeOnly || !getValues("mobile"))) {
+      if (extracted.mobile && (overwriteExisting || !getValues("mobile"))) {
         setValue("mobile", extracted.mobile, { shouldValidate: true })
         filled.push("Mobile")
       }
-      if (extracted.address && (!mergeOnly || !getValues("address"))) {
+      if (extracted.address && (overwriteExisting || !getValues("address"))) {
         setValue("address", extracted.address, { shouldValidate: true })
         filled.push("Address")
       }
 
-      if (mergeOnly) {
-        setExtractedSummary((prev) => Array.from(new Set([...prev, ...filled])))
-      } else {
-        setExtractedSummary(filled)
-      }
+      setExtractedSummary((prev) => (overwriteExisting ? filled : Array.from(new Set([...prev, ...filled]))))
 
-      if (filled.length === 0) {
-        setScanNotice("Photo attached! Could not read text clearly — please fill or verify details below.")
+      if (filled.length === 0 && extracted.extractedFields.length === 0) {
+        setScanNotice("Document attached! Could not read text clearly — please fill or verify details below.")
       }
-    } catch {
-      setScanNotice("Photo attached! Please fill or verify details below.")
+    } catch (err: unknown) {
+      if (err instanceof PdfPasswordRequiredError) {
+        setLockedPdfName(err.fileName)
+        setScanNotice(
+          err.incorrectPassword
+            ? `Incorrect password for ${err.fileName}. Try again (for e-Aadhaar: first 4 letters of Name in CAPS + Birth Year, e.g. RAHU1995).`
+            : `${err.fileName} is password protected. Enter password below to extract details automatically.`
+        )
+      } else {
+        setScanNotice("Document attached! Please fill or verify details below.")
+      }
     } finally {
       setIsScanning(false)
       setScanProgress(0)
     }
   }
 
-  const handleFrontIdSelect = async (file: File | null) => {
-    if (!file) return
-    setSelectedFile(file)
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    if (file.type.startsWith("image/")) {
-      setPreviewUrl(URL.createObjectURL(file))
-    } else {
-      setPreviewUrl(null)
-    }
-    await runIdOcr(file, false)
+  const handleFilesAdded = async (fileList: FileList | null, replaceAll: boolean) => {
+    if (!fileList || fileList.length === 0) return
+    const incoming = Array.from(fileList)
+    const nextFiles = replaceAll ? incoming : [...selectedFiles, ...incoming]
+    setSelectedFiles(nextFiles)
+    await runExtraction(replaceAll ? nextFiles : incoming, pdfPasswords, replaceAll)
   }
 
-  const handleBackIdSelect = async (file: File | null) => {
-    if (!file) return
-    await runIdOcr(file, true)
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, idx) => idx !== index))
+  }
+
+  const handleUnlockPdf = async () => {
+    if (!lockedPdfName || !pdfPasswordInput) return
+    const nextPasswords = { ...pdfPasswords, [lockedPdfName]: pdfPasswordInput }
+    setPdfPasswords(nextPasswords)
+    setPdfPasswordInput("")
+    await runExtraction(selectedFiles, nextPasswords, false)
   }
 
   useEffect(() => {
@@ -194,7 +217,9 @@ export function PublicCheckInPage() {
       formData.append("documentType", values.idType)
       formData.append("documentNumber", values.idNumber)
       formData.append("marketingConsent", String(!!values.marketingConsent))
-      if (selectedFile) formData.append("documentFile", selectedFile)
+      selectedFiles.forEach((file) => {
+        formData.append("documentFiles", file)
+      })
 
       await apiClient.post(`/api/public/checkin/${token}/upload`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -308,95 +333,149 @@ export function PublicCheckInPage() {
                 </div>
               )}
 
-              {/* Step 1: Smart ID Upload & Auto-Fill */}
+              {/* Step 1: Smart ID Upload & Auto-Fill (Multiple Photos or PDF) */}
               <div className="rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-primary" />
                     <span className="text-sm font-bold text-foreground">
-                      Quick Auto-Fill via Govt ID Photo
+                      Quick Auto-Fill via Govt ID Photo / PDF
                     </span>
                   </div>
                   <span className="text-[11px] font-medium text-primary bg-white px-2 py-0.5 rounded-full border">
-                    Aadhaar / PAN / DL / Passport
+                    Front + Back Pics or PDF
                   </span>
                 </div>
 
                 <input
                   type="file"
                   id="idFile"
+                  multiple
                   className="hidden"
-                  onChange={(e) => handleFrontIdSelect(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    handleFilesAdded(e.target.files, true)
+                    e.target.value = ""
+                  }}
                   accept="image/*,application/pdf"
                 />
 
-                <label
-                  htmlFor="idFile"
-                  className="block cursor-pointer rounded-lg border bg-white p-3 hover:border-primary transition-colors"
-                >
-                  {isScanning ? (
-                    <div className="space-y-2 py-2 text-center">
-                      <div className="flex items-center justify-center gap-2 text-primary text-sm font-semibold">
-                        <ScanLine className="h-4 w-4 animate-pulse" />
-                        <span>Reading details from ID... {scanProgress}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                <input
+                  type="file"
+                  id="idFileMore"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    handleFilesAdded(e.target.files, false)
+                    e.target.value = ""
+                  }}
+                  accept="image/*,application/pdf"
+                />
+
+                {isScanning ? (
+                  <div className="rounded-lg border bg-white p-4 space-y-2 text-center">
+                    <div className="flex items-center justify-center gap-2 text-primary text-sm font-semibold">
+                      <ScanLine className="h-4 w-4 animate-pulse" />
+                      <span>{scanLabel} {scanProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-primary h-full transition-all duration-200"
+                        style={{ width: `${Math.max(10, scanProgress)}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : selectedFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {selectedFiles.map((file, idx) => (
                         <div
-                          className="bg-primary h-full transition-all duration-200"
-                          style={{ width: `${Math.max(10, scanProgress)}%` }}
-                        />
-                      </div>
+                          key={`${file.name}-${idx}`}
+                          className="flex items-center gap-2.5 rounded-lg border bg-white p-2.5 relative"
+                        >
+                          {previewUrls[idx] ? (
+                            <img
+                              src={previewUrls[idx]}
+                              alt={`ID ${idx + 1}`}
+                              className="h-12 w-16 object-cover rounded border shrink-0"
+                            />
+                          ) : (
+                            <div className="h-12 w-12 rounded border bg-slate-100 flex items-center justify-center shrink-0">
+                              <FileText className="h-6 w-6 text-primary" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1 text-left">
+                            <p className="text-xs font-semibold text-emerald-700">
+                              {idx === 0 ? "ID Front / Doc" : `Photo / Doc #${idx + 1}`}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate">{file.name}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFile(idx)}
+                            className="p-1 text-muted-foreground hover:text-destructive rounded"
+                            title="Remove file"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ) : selectedFile ? (
-                    <div className="flex items-center gap-3">
-                      {previewUrl ? (
-                        <img
-                          src={previewUrl}
-                          alt="ID Preview"
-                          className="h-14 w-20 object-cover rounded border shrink-0"
-                        />
-                      ) : (
-                        <CheckCircle2 className="h-10 w-10 text-emerald-600 shrink-0" />
-                      )}
-                      <div className="min-w-0 flex-1 text-left">
-                        <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> ID Photo Attached
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">{selectedFile.name}</p>
-                        <p className="text-[11px] text-primary mt-0.5 font-medium">
-                          Tap to retake / change photo
-                        </p>
-                      </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <label
+                        htmlFor="idFileMore"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-white hover:border-primary text-xs font-semibold text-primary cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add Back Side / Another Pic
+                      </label>
+                      <label
+                        htmlFor="idFile"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-white hover:border-primary text-xs font-medium text-muted-foreground cursor-pointer"
+                      >
+                        Replace All
+                      </label>
                     </div>
-                  ) : (
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="idFile"
+                    className="block cursor-pointer rounded-lg border bg-white p-3 hover:border-primary transition-colors"
+                  >
                     <div className="flex flex-col items-center text-center py-2 text-muted-foreground">
                       <Camera className="h-8 w-8 mb-1.5 text-primary" />
                       <span className="text-sm font-semibold text-foreground">
-                        Snap or Upload Govt ID Front
+                        Upload Aadhaar (Front + Back Pics) or PDF
                       </span>
                       <span className="text-xs">
-                        Auto-fills your name, ID number &amp; address — no manual typing!
+                        Select 1 or multiple photos / PDF — auto-fills name, ID number &amp; address!
                       </span>
                     </div>
-                  )}
-                </label>
+                  </label>
+                )}
+
+                {lockedPdfName && !isScanning && (
+                  <div className="p-3 rounded-lg bg-white border border-amber-300 space-y-2">
+                    <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5" /> Unlock Password-Protected PDF ({lockedPdfName})
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        value={pdfPasswordInput}
+                        onChange={(e) => setPdfPasswordInput(e.target.value)}
+                        placeholder="e.g. RAHU1995 (e-Aadhaar password)"
+                        className="h-8 text-xs"
+                      />
+                      <Button type="button" size="sm" className="h-8 text-xs" onClick={handleUnlockPdf}>
+                        Unlock &amp; Extract
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {extractedSummary.length > 0 && !isScanning && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-2 rounded-lg">
-                    <span>
-                      <strong>Auto-filled:</strong> {extractedSummary.join(", ")} (verify below)
-                    </span>
-                    {!getValues("address") && (
-                      <label className="text-primary font-semibold underline cursor-pointer shrink-0">
-                        Scan Back Side for Address
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept="image/*"
-                          onChange={(e) => handleBackIdSelect(e.target.files?.[0] ?? null)}
-                        />
-                      </label>
-                    )}
+                  <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-2 rounded-lg">
+                    <strong>Auto-filled:</strong> {extractedSummary.join(", ")} (verify below)
                   </div>
                 )}
 

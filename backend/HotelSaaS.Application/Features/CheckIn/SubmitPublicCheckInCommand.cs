@@ -9,6 +9,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HotelSaaS.Application.Features.CheckIn;
 
+public record UploadedDocumentItem(Stream Stream, string FileName);
+
 public record SubmitPublicCheckInCommand : IRequest<bool>
 {
     public string Token { get; init; } = string.Empty;
@@ -20,6 +22,7 @@ public record SubmitPublicCheckInCommand : IRequest<bool>
     public string? DocumentNumber { get; init; }
     public Stream? DocumentStream { get; init; }
     public string? DocumentFileName { get; init; }
+    public List<UploadedDocumentItem>? Documents { get; init; }
     public bool MarketingConsent { get; init; }
 }
 
@@ -127,45 +130,7 @@ public class SubmitPublicCheckInCommandHandler :
             };
             _context.CheckInSessions.Add(session);
 
-            // Attach document if provided
-            if (request.DocumentStream != null && !string.IsNullOrWhiteSpace(request.DocumentFileName))
-            {
-                var storageKey = await _storageService.UploadFileAsync(
-                    request.DocumentStream,
-                    request.DocumentFileName,
-                    "guest-documents",
-                    cancellationToken);
-
-                var doc = new GuestDocument
-                {
-                    Id = Guid.NewGuid(),
-                    HotelId = hotel.Id,
-                    GuestId = walkInGuest.Id,
-                    DocumentType = request.DocumentType,
-                    DocumentNumber = request.DocumentNumber,
-                    StorageKey = storageKey,
-                    FileName = request.DocumentFileName,
-                    FileSizeBytes = request.DocumentStream.Length,
-                    IsVerified = false
-                };
-                _context.GuestDocuments.Add(doc);
-            }
-            else if (!string.IsNullOrWhiteSpace(request.DocumentNumber))
-            {
-                var doc = new GuestDocument
-                {
-                    Id = Guid.NewGuid(),
-                    HotelId = hotel.Id,
-                    GuestId = walkInGuest.Id,
-                    DocumentType = request.DocumentType,
-                    DocumentNumber = request.DocumentNumber,
-                    StorageKey = "manual-entry",
-                    FileName = $"{request.DocumentType}.txt",
-                    FileSizeBytes = 0,
-                    IsVerified = false
-                };
-                _context.GuestDocuments.Add(doc);
-            }
+            await SaveDocumentsAsync(request, hotel.Id, walkInGuest.Id, cancellationToken);
 
             // Record consent
             _context.GuestConsents.Add(new GuestConsent
@@ -204,46 +169,7 @@ public class SubmitPublicCheckInCommandHandler :
             guest.MarketingConsent = request.MarketingConsent;
             if (request.MarketingConsent) guest.MarketingConsentAt = DateTime.UtcNow;
 
-            // Upload document if provided
-            if (request.DocumentStream != null && !string.IsNullOrWhiteSpace(request.DocumentFileName))
-            {
-                var storageKey = await _storageService.UploadFileAsync(
-                    request.DocumentStream,
-                    request.DocumentFileName,
-                    "guest-documents",
-                    cancellationToken);
-
-                var doc = new GuestDocument
-                {
-                    Id = Guid.NewGuid(),
-                    HotelId = session.HotelId,
-                    GuestId = guest.Id,
-                    DocumentType = request.DocumentType,
-                    DocumentNumber = request.DocumentNumber,
-                    StorageKey = storageKey,
-                    FileName = request.DocumentFileName,
-                    FileSizeBytes = request.DocumentStream.Length,
-                    IsVerified = false
-                };
-
-                _context.GuestDocuments.Add(doc);
-            }
-            else if (!string.IsNullOrWhiteSpace(request.DocumentNumber))
-            {
-                var doc = new GuestDocument
-                {
-                    Id = Guid.NewGuid(),
-                    HotelId = session.HotelId,
-                    GuestId = guest.Id,
-                    DocumentType = request.DocumentType,
-                    DocumentNumber = request.DocumentNumber,
-                    StorageKey = "manual-entry",
-                    FileName = $"{request.DocumentType}.txt",
-                    FileSizeBytes = 0,
-                    IsVerified = false
-                };
-                _context.GuestDocuments.Add(doc);
-            }
+            await SaveDocumentsAsync(request, session.HotelId, guest.Id, cancellationToken);
 
             // Record consent
             _context.GuestConsents.Add(new GuestConsent
@@ -262,5 +188,64 @@ public class SubmitPublicCheckInCommandHandler :
 
         await _context.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    private async Task SaveDocumentsAsync(
+        SubmitPublicCheckInCommand request,
+        Guid hotelId,
+        Guid guestId,
+        CancellationToken cancellationToken)
+    {
+        var filesToUpload = new List<UploadedDocumentItem>();
+        if (request.Documents != null && request.Documents.Count > 0)
+        {
+            filesToUpload.AddRange(request.Documents);
+        }
+        else if (request.DocumentStream != null && !string.IsNullOrWhiteSpace(request.DocumentFileName))
+        {
+            filesToUpload.Add(new UploadedDocumentItem(request.DocumentStream, request.DocumentFileName));
+        }
+
+        if (filesToUpload.Count > 0)
+        {
+            foreach (var item in filesToUpload)
+            {
+                var storageKey = await _storageService.UploadFileAsync(
+                    item.Stream,
+                    item.FileName,
+                    "guest-documents",
+                    cancellationToken);
+
+                _context.GuestDocuments.Add(new GuestDocument
+                {
+                    Id = Guid.NewGuid(),
+                    HotelId = hotelId,
+                    GuestId = guestId,
+                    DocumentType = request.DocumentType,
+                    DocumentNumber = request.DocumentNumber,
+                    StorageKey = storageKey,
+                    FileName = item.FileName,
+                    FileSizeBytes = item.Stream.Length,
+                    IsVerified = false
+                });
+            }
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.DocumentNumber))
+        {
+            _context.GuestDocuments.Add(new GuestDocument
+            {
+                Id = Guid.NewGuid(),
+                HotelId = hotelId,
+                GuestId = guestId,
+                DocumentType = request.DocumentType,
+                DocumentNumber = request.DocumentNumber,
+                StorageKey = "manual-entry",
+                FileName = $"{request.DocumentType}.txt",
+                FileSizeBytes = 0,
+                IsVerified = false
+            });
+        }
     }
 }

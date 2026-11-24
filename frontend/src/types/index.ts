@@ -284,6 +284,7 @@ export interface CheckInSession extends TenantEntity {
   documentType?: string
   documentNumber?: string
   documentUrl?: string
+  documentUrls?: string[]
   bookingReference?: string
   checkInDate?: string
   checkOutDate?: string

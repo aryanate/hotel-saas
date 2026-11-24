@@ -44,7 +44,13 @@ public class GetPendingCheckInsQueryHandler : IRequestHandler<GetPendingCheckIns
         return sessions.Select(s =>
         {
             var guest = s.Booking?.Guest;
-            var doc = guest?.Documents?.FirstOrDefault();
+            var docs = guest?.Documents?.Where(d => !d.IsDeleted).ToList() ?? new();
+            var doc = docs.FirstOrDefault();
+            var docUrls = docs
+                .Where(d => !string.IsNullOrEmpty(d.StorageKey) && d.StorageKey != "manual-entry" && d.StorageKey.StartsWith("uploads"))
+                .Select(d => d.StorageKey.StartsWith("/") ? d.StorageKey : $"/{d.StorageKey}")
+                .ToList();
+
             return new CheckInSessionDto
             {
                 Id = s.Id,
@@ -62,9 +68,8 @@ public class GetPendingCheckInsQueryHandler : IRequestHandler<GetPendingCheckIns
                 GuestAddress = guest?.Address,
                 DocumentType = doc?.DocumentType.ToString(),
                 DocumentNumber = doc?.DocumentNumber,
-                DocumentUrl = (doc != null && doc.StorageKey != "manual-entry" && !string.IsNullOrEmpty(doc.StorageKey))
-                    ? (doc.StorageKey.StartsWith("/") ? doc.StorageKey : $"/{doc.StorageKey}")
-                    : null,
+                DocumentUrl = docUrls.FirstOrDefault(),
+                DocumentUrls = docUrls,
                 BookingReference = s.Booking?.BookingReference,
                 CheckInDate = s.Booking?.CheckInDate ?? DateTime.MinValue,
                 CheckOutDate = s.Booking?.CheckOutDate ?? DateTime.MinValue,

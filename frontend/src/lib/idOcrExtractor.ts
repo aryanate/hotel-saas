@@ -1,4 +1,8 @@
 import Tesseract from "tesseract.js"
+import * as pdfjsLib from "pdfjs-dist"
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 export type SupportedIdType =
   | "MaskedAadhaar"
@@ -15,6 +19,18 @@ export interface ExtractedIdDetails {
   mobile?: string
   extractedFields: string[]
   rawText: string
+}
+
+export class PdfPasswordRequiredError extends Error {
+  fileName: string
+  incorrectPassword: boolean
+
+  constructor(fileName: string, incorrectPassword = false) {
+    super(`Password required for PDF: ${fileName}`)
+    this.name = "PdfPasswordRequiredError"
+    this.fileName = fileName
+    this.incorrectPassword = incorrectPassword
+  }
 }
 
 const NOISE_PHRASES = [
@@ -59,6 +75,13 @@ function isBoilerplateLine(line: string): boolean {
   return NOISE_PHRASES.some((phrase) => lower.includes(phrase))
 }
 
+function cleanAsciiLine(line: string): string {
+  return line
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function cleanNameCandidate(line: string): string {
   return line
     .replace(/[^A-Za-z.\s]/g, " ")
@@ -68,13 +91,11 @@ function cleanNameCandidate(line: string): string {
 
 function isLikelyPersonName(line: string): boolean {
   if (!line || isBoilerplateLine(line)) return false
-  // Reject lines with lots of digits or symbols
   if (/\d/.test(line)) return false
   const cleaned = cleanNameCandidate(line)
   const words = cleaned.split(" ").filter((w) => w.length >= 2)
   if (words.length < 2 || words.length > 4) return false
   if (cleaned.length < 5 || cleaned.length > 45) return false
-  // Must look mostly alphabetic
   const alphaRatio = cleaned.replace(/\s/g, "").length / Math.max(1, line.trim().length)
   return alphaRatio > 0.75
 }
@@ -88,9 +109,6 @@ function toTitleCase(name: string): string {
     .join(" ")
 }
 
-/**
- * Downscales large phone camera photos and boosts grayscale contrast for fast, accurate OCR.
- */
 async function preprocessImageForOcr(file: File): Promise<string> {
   const objectUrl = URL.createObjectURL(file)
   try {
@@ -124,13 +142,82 @@ async function preprocessImageForOcr(file: File): Promise<string> {
   }
 }
 
-/**
- * Parses raw OCR text from Aadhaar, PAN, Driving License, Voter ID, or Passport.
- */
+async function extractTextFromPdf(
+  file: File,
+  password?: string,
+  onProgress?: (percent: number) => void
+): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer()
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(arrayBuffer),
+    password: password || undefined,
+  })
+
+  let pdf: pdfjsLib.PDFDocumentProxy
+  try {
+    pdf = await loadingTask.promise
+  } catch (err: unknown) {
+    const errObj = err as { name?: string; code?: number }
+    if (errObj?.name === "PasswordException") {
+      throw new PdfPasswordRequiredError(file.name, errObj.code === 2)
+    }
+    throw err
+  }
+
+  const maxPages = Math.min(pdf.numPages, 3)
+  const textParts: string[] = []
+
+  for (let p = 1; p <= maxPages; p++) {
+    const page = await pdf.getPage(p)
+    const content = await page.getTextContent()
+    const strings = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .filter(Boolean)
+    if (strings.length > 0) {
+      textParts.push(strings.join("\n"))
+    }
+    if (onProgress) onProgress(Math.round((p / maxPages) * 40))
+  }
+
+  const embeddedText = textParts.join("\n").trim()
+  // If digital PDF has meaningful selectable English text, return immediately!
+  if (embeddedText.replace(/[^A-Za-z0-9]/g, "").length >= 40) {
+    if (onProgress) onProgress(100)
+    return embeddedText
+  }
+
+  // Otherwise scanned PDF -> render pages to canvas and run Tesseract OCR
+  const ocrParts: string[] = []
+  const ocrPages = Math.min(pdf.numPages, 2)
+  for (let p = 1; p <= ocrPages; p++) {
+    const page = await pdf.getPage(p)
+    const viewport = page.getViewport({ scale: 2.0 })
+    const canvas = document.createElement("canvas")
+    canvas.width = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
+    const ctx = canvas.getContext("2d")
+    if (!ctx) continue
+
+    await page.render({ canvasContext: ctx, viewport, canvas }).promise
+    const dataUrl = canvas.toDataURL("image/png")
+    const res = await Tesseract.recognize(dataUrl, "eng", {
+      logger: (m) => {
+        if (m.status === "recognizing text" && typeof m.progress === "number" && onProgress) {
+          const base = 40 + Math.round(((p - 1 + m.progress) / ocrPages) * 60)
+          onProgress(base)
+        }
+      },
+    })
+    if (res.data.text) ocrParts.push(res.data.text)
+  }
+
+  return ocrParts.join("\n")
+}
+
 export function parseIndianIdText(rawText: string): ExtractedIdDetails {
   const lines = rawText
     .split(/\r?\n/)
-    .map((l) => l.trim())
+    .map((l) => cleanAsciiLine(l))
     .filter((l) => l.length > 1)
 
   const upperText = rawText.toUpperCase()
@@ -140,7 +227,7 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
   let address: string | undefined
   let mobile: string | undefined
 
-  // 1. Passport MRZ check (P<IND...)
+  // 1. Passport MRZ check
   const mrzMatch = upperText.match(/P<IND([A-Z]+)<<([A-Z<]+)/)
   if (mrzMatch || upperText.includes("PASSPORT") || upperText.includes("REPUBLIC OF INDIA")) {
     idType = "Passport"
@@ -154,28 +241,28 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
     if (passNo) idNumber = passNo[1]
   }
 
-  // 2. PAN Card check (ABCDE1234F)
+  // 2. PAN Card check
   const panMatch = upperText.match(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/)
   if (!idType && (panMatch || upperText.includes("INCOME TAX") || upperText.includes("PERMANENT ACCOUNT"))) {
     idType = "PAN"
     if (panMatch) idNumber = panMatch[1]
   }
 
-  // 3. Driving License check (MH12 20200012345 or MH-12-2020-0012345)
+  // 3. Driving License check
   const dlMatch = upperText.match(/\b([A-Z]{2}[-\s]?\d{2}[-\s]?(?:19|20)\d{2}[-\s]?\d{6,7})\b/)
   if (!idType && (dlMatch || upperText.includes("DRIVING LICEN"))) {
     idType = "DrivingLicense"
     if (dlMatch) idNumber = dlMatch[1].replace(/\s+/g, "-")
   }
 
-  // 4. Voter ID check (EPIC ABC1234567)
+  // 4. Voter ID check
   const voterMatch = upperText.match(/\b([A-Z]{3}[0-9]{7})\b/)
   if (!idType && (upperText.includes("ELECTION COMMISSION") || (voterMatch && !panMatch))) {
     idType = "VoterID"
     if (voterMatch) idNumber = voterMatch[1]
   }
 
-  // 5. Aadhaar Card check (12 digits or XXXX XXXX 1234)
+  // 5. Aadhaar Card check
   const maskedAadhaarMatch = upperText.match(/\b([X*]{4}[\s-]?[X*]{4}[\s-]?\d{4})\b/)
   const fullAadhaarMatch = rawText.match(/(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)/)
   if (
@@ -194,9 +281,8 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
     }
   }
 
-  // 6. Extract Name if not already extracted from Passport MRZ
+  // 6. Extract Name
   if (!fullName) {
-    // Look for line immediately above DOB / Year of Birth (standard Aadhaar / PAN layout)
     const dobIdx = lines.findIndex((l) =>
       /\b(dob|d\.o\.b|birth|yob|father|male|female)\b/i.test(l)
     )
@@ -209,7 +295,6 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
       }
     }
 
-    // Explicit "Name:" label fallback
     if (!fullName) {
       const nameLabelIdx = lines.findIndex((l) => /^name\s*[:\-]/i.test(l))
       if (nameLabelIdx >= 0) {
@@ -222,15 +307,14 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
       }
     }
 
-    // Final fallback: first clean 2-3 word name line
     if (!fullName) {
       const candidate = lines.find((l) => isLikelyPersonName(l))
       if (candidate) fullName = toTitleCase(cleanNameCandidate(candidate))
     }
   }
 
-  // 7. Extract Mobile Number (10 digits starting 6-9, not inside Aadhaar 12-digit block)
-  const mobileLabelMatch = rawText.match(/(?:mobile|mob|ph|phone)[^\d]{0,8}([6-9]\d{9})\b/i)
+  // 7. Extract Mobile Number
+  const mobileLabelMatch = rawText.match(/(?:mobile|mob|ph|phone)[^\d]{0,10}([6-9]\d{9})\b/i)
   if (mobileLabelMatch) {
     mobile = mobileLabelMatch[1]
   } else {
@@ -238,25 +322,25 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
     if (standaloneMob) mobile = standaloneMob[1]
   }
 
-  // 8. Extract Address (after "Address:" / "C/O" / "S/O" / "D/O" / "W/O" up to 6-digit PIN code)
+  // 8. Extract Address (supports Aadhaar front/back & e-Aadhaar PDF)
   const addrStartIdx = lines.findIndex((l) =>
-    /\b(address|c\/o|s\/o|d\/o|w\/o|to\s*:)\b/i.test(l)
+    /\b(address|c\/o|s\/o|d\/o|w\/o)\b/i.test(l) || /^to\s*[:,\-]?$/i.test(l)
   )
   const pinIdx = lines.findIndex((l) => /\b[1-9]\d{5}\b/.test(l))
 
   if (addrStartIdx >= 0) {
-    const endIdx = pinIdx >= addrStartIdx ? pinIdx : Math.min(lines.length - 1, addrStartIdx + 4)
+    const endIdx = pinIdx >= addrStartIdx ? pinIdx : Math.min(lines.length - 1, addrStartIdx + 5)
     const slice = lines
       .slice(addrStartIdx, endIdx + 1)
-      .map((l) => l.replace(/^address\s*[:\-]?\s*/i, "").trim())
-      .filter((l) => l.length > 1 && !/^\d{4}\s?\d{4}\s?\d{4}$/.test(l))
+      .map((l) => l.replace(/^(?:address|to)\s*[:\-]?\s*/i, "").trim())
+      .filter((l) => l.length > 1 && !/^\d{4}[\s-]?\d{4}[\s-]?\d{4}$/.test(l) && !isBoilerplateLine(l))
     const joined = slice.join(", ").replace(/,\s*,+/g, ", ").trim()
     if (joined.length >= 10) address = joined
   } else if (pinIdx > 0) {
-    const startIdx = Math.max(0, pinIdx - 3)
+    const startIdx = Math.max(0, pinIdx - 4)
     const slice = lines
       .slice(startIdx, pinIdx + 1)
-      .filter((l) => !isBoilerplateLine(l) && !/^\d{4}\s?\d{4}\s?\d{4}$/.test(l))
+      .filter((l) => !isBoilerplateLine(l) && !/^\d{4}[\s-]?\d{4}[\s-]?\d{4}$/.test(l))
     const joined = slice.join(", ").replace(/,\s*,+/g, ", ").trim()
     if (joined.length >= 10) address = joined
   }
@@ -279,19 +363,60 @@ export function parseIndianIdText(rawText: string): ExtractedIdDetails {
   }
 }
 
-export async function extractDetailsFromIdImage(
-  file: File,
-  onProgress?: (percent: number) => void
+export async function extractDetailsFromFiles(
+  files: File[],
+  pdfPasswords: Record<string, string> = {},
+  onProgress?: (statusLabel: string, percent: number) => void
 ): Promise<ExtractedIdDetails> {
-  const imageData = await preprocessImageForOcr(file)
-  const result = await Tesseract.recognize(imageData, "eng", {
-    logger: (m) => {
-      if (m.status === "recognizing text" && typeof m.progress === "number" && onProgress) {
-        onProgress(Math.round(m.progress * 100))
-      }
-    },
-  })
+  const perFileResults: ExtractedIdDetails[] = []
+  const rawTexts: string[] = []
 
-  return parseIndianIdText(result.data.text || "")
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    const label = files.length > 1 ? `Scanning file ${i + 1} of ${files.length}...` : "Reading details from ID..."
+    let text = ""
+
+    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      text = await extractTextFromPdf(file, pdfPasswords[file.name], (pct) => {
+        if (onProgress) onProgress(label, pct)
+      })
+    } else if (file.type.startsWith("image/")) {
+      const imageData = await preprocessImageForOcr(file)
+      const result = await Tesseract.recognize(imageData, "eng", {
+        logger: (m) => {
+          if (m.status === "recognizing text" && typeof m.progress === "number" && onProgress) {
+            onProgress(label, Math.round(m.progress * 100))
+          }
+        },
+      })
+      text = result.data.text || ""
+    }
+
+    if (text.trim()) {
+      rawTexts.push(text)
+      perFileResults.push(parseIndianIdText(text))
+    }
+  }
+
+  const combinedText = rawTexts.join("\n")
+  const combinedParsed = parseIndianIdText(combinedText)
+
+  // Prefer explicit per-file hits if combined text loses context across pages
+  const merged: ExtractedIdDetails = {
+    idType: perFileResults.find((r) => r.idType)?.idType ?? combinedParsed.idType,
+    idNumber: perFileResults.find((r) => r.idNumber)?.idNumber ?? combinedParsed.idNumber,
+    fullName: perFileResults.find((r) => r.fullName)?.fullName ?? combinedParsed.fullName,
+    mobile: perFileResults.find((r) => r.mobile)?.mobile ?? combinedParsed.mobile,
+    address: perFileResults.find((r) => r.address)?.address ?? combinedParsed.address,
+    extractedFields: [],
+    rawText: combinedText,
+  }
+
+  if (merged.idType) merged.extractedFields.push("ID Type")
+  if (merged.idNumber) merged.extractedFields.push("ID Number")
+  if (merged.fullName) merged.extractedFields.push("Full Name")
+  if (merged.mobile) merged.extractedFields.push("Mobile")
+  if (merged.address) merged.extractedFields.push("Address")
+
+  return merged
 }
-

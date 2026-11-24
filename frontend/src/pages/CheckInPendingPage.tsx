@@ -221,52 +221,87 @@ export function CheckInPendingPage() {
             </div>
 
             <div className="border rounded-lg p-4 bg-slate-50 flex flex-col items-center justify-center min-h-[180px] text-center">
-              {selectedSession?.documentUrl ? (
-                <div className="w-full space-y-2">
-                  <p className="font-semibold text-sm text-left">
-                    {getDocLabel(selectedSession?.documentType)} — ID: {selectedSession.documentNumber ?? "N/A"}
-                  </p>
-                  <img
-                    src={selectedSession.documentUrl}
-                    alt="Uploaded ID Document"
-                    className="w-full max-h-64 object-contain rounded-md border bg-white"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none"
-                      const fallback = document.getElementById("doc-fallback")
-                      if (fallback) fallback.style.display = "flex"
-                    }}
-                  />
-                  <div id="doc-fallback" className="hidden flex-col items-center text-muted-foreground py-4">
-                    <FileText className="h-10 w-10 text-primary/50 mb-1" />
-                    <span className="text-xs">Document uploaded (non-image file)</span>
-                    <a
-                      href={selectedSession.documentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary underline mt-1"
-                    >
-                      Open file
-                    </a>
+              {(() => {
+                const urls =
+                  selectedSession?.documentUrls && selectedSession.documentUrls.length > 0
+                    ? selectedSession.documentUrls
+                    : selectedSession?.documentUrl
+                      ? [selectedSession.documentUrl]
+                      : []
+
+                if (urls.length === 0) {
+                  return (
+                    <>
+                      <FileText className="h-14 w-14 text-primary/70 mb-2" />
+                      <p className="font-semibold text-sm">
+                        {getDocLabel(selectedSession?.documentType)} Verification
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {selectedSession?.documentNumber
+                          ? `ID Number: ${selectedSession.documentNumber}`
+                          : "Digital KYC Declaration Submitted"}
+                      </p>
+                      {selectedSession?.documentNumber && (
+                        <span className="mt-3 text-xs font-mono bg-white px-3 py-1 rounded-md border font-medium">
+                          {selectedSession.documentNumber}
+                        </span>
+                      )}
+                    </>
+                  )
+                }
+
+                return (
+                  <div className="w-full space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-sm text-left">
+                        {getDocLabel(selectedSession?.documentType)} — ID: {selectedSession?.documentNumber ?? "N/A"}
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        {urls.length} {urls.length === 1 ? "file" : "files"} attached
+                      </span>
+                    </div>
+                    <div className={urls.length > 1 ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "space-y-2"}>
+                      {urls.map((url, idx) => {
+                        const isPdf = url.toLowerCase().endsWith(".pdf")
+                        return isPdf ? (
+                          <div
+                            key={url}
+                            className="flex flex-col items-center justify-center p-4 rounded-md border bg-white text-muted-foreground min-h-[140px]"
+                          >
+                            <FileText className="h-10 w-10 text-primary/60 mb-1.5" />
+                            <span className="text-xs font-medium text-foreground">
+                              PDF Document #{idx + 1}
+                            </span>
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary underline mt-1 font-medium"
+                            >
+                              Open / View PDF
+                            </a>
+                          </div>
+                        ) : (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded-md border bg-white overflow-hidden hover:ring-2 hover:ring-primary/40 transition"
+                            title="Click to open full size"
+                          >
+                            <img
+                              src={url}
+                              alt={`Uploaded ID Document ${idx + 1}`}
+                              className="w-full max-h-56 object-contain bg-white"
+                            />
+                          </a>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <>
-                  <FileText className="h-14 w-14 text-primary/70 mb-2" />
-                  <p className="font-semibold text-sm">
-                    {getDocLabel(selectedSession?.documentType)} Verification
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {selectedSession?.documentNumber
-                      ? `ID Number: ${selectedSession.documentNumber}`
-                      : "Digital KYC Declaration Submitted"}
-                  </p>
-                  {selectedSession?.documentNumber && (
-                    <span className="mt-3 text-xs font-mono bg-white px-3 py-1 rounded-md border font-medium">
-                      {selectedSession.documentNumber}
-                    </span>
-                  )}
-                </>
-              )}
+                )
+              })()}
             </div>
 
             {selectedSession?.roomNumbers && selectedSession.roomNumbers.length > 0 ? (

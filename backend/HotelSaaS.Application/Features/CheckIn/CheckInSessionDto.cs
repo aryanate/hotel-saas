@@ -20,6 +20,7 @@ public class CheckInSessionDto
     public string? DocumentType { get; set; }
     public string? DocumentNumber { get; set; }
     public string? DocumentUrl { get; set; }
+    public List<string> DocumentUrls { get; set; } = new();
     public string? BookingReference { get; set; }
     public string? HotelName { get; set; }
     public DateTime CheckInDate { get; set; }
