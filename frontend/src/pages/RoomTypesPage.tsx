@@ -25,8 +25,7 @@ export function RoomTypesPage() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [basePrice, setBasePrice] = useState(2500)
-  const [capacityAdults, setCapacityAdults] = useState(2)
-  const [capacityChildren, setCapacityChildren] = useState(1)
+  const [maxCapacity, setMaxCapacity] = useState(2)
 
   const { data: res, isLoading } = useQuery({
     queryKey: ["room-types"],
@@ -41,8 +40,7 @@ export function RoomTypesPage() {
         name,
         description,
         basePrice,
-        capacityAdults,
-        capacityChildren,
+        maxCapacity,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["room-types"] })
@@ -50,6 +48,10 @@ export function RoomTypesPage() {
       setIsModalOpen(false)
       setName("")
       setDescription("")
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to create room type", variant: "destructive" })
     },
   })
 
@@ -91,8 +93,8 @@ export function RoomTypesPage() {
               </div>
               <p className="text-sm text-muted-foreground">{type.description || "No description provided."}</p>
               <div className="pt-2 border-t text-xs text-muted-foreground flex items-center justify-between">
-                <span>Max Adults: {type.capacityAdults}</span>
-                <span>Max Children: {type.capacityChildren}</span>
+                <span>Max Capacity: {type.maxCapacity} Guests</span>
+                <span>{type.totalRooms ?? 0} Rooms</span>
               </div>
             </div>
           ))}
@@ -125,7 +127,7 @@ export function RoomTypesPage() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="price">Base Rate (₹)</Label>
                 <Input
@@ -136,21 +138,13 @@ export function RoomTypesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="adults">Adults</Label>
+                <Label htmlFor="capacity">Max Capacity (Guests)</Label>
                 <Input
-                  id="adults"
+                  id="capacity"
                   type="number"
-                  value={capacityAdults}
-                  onChange={(e) => setCapacityAdults(Number(e.target.value))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="children">Children</Label>
-                <Input
-                  id="children"
-                  type="number"
-                  value={capacityChildren}
-                  onChange={(e) => setCapacityChildren(Number(e.target.value))}
+                  min="1"
+                  value={maxCapacity}
+                  onChange={(e) => setMaxCapacity(Number(e.target.value))}
                 />
               </div>
             </div>

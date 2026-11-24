@@ -7,6 +7,7 @@ public class InvoiceDto
     public Guid Id { get; set; }
     public Guid HotelId { get; set; }
     public Guid BookingId { get; set; }
+    public string? BookingReference { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
     public DateTime InvoiceDate { get; set; }
     public string GuestName { get; set; } = string.Empty;

@@ -13,8 +13,8 @@ export interface BookingFilterParams {
 export interface CreateBookingPayload {
   guestId?: string
   guestName?: string
-  mobile?: string
-  email?: string
+  guestMobile?: string
+  guestEmail?: string
   roomIds: string[]
   checkInDate: string
   checkOutDate: string

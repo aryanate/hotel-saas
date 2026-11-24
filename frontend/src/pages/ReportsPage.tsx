@@ -1,12 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import {
-  Download,
-  FileSpreadsheet,
-  IndianRupee,
-  BedDouble,
-  Users,
-} from "lucide-react"
+import { Download, FileSpreadsheet } from "lucide-react"
 import {
   BarChart,
   Bar,
@@ -27,8 +21,9 @@ import { useToast } from "@/components/ui/use-toast"
 
 export function ReportsPage() {
   const { toast } = useToast()
-  const [selectedMonth, setSelectedMonth] = useState("11")
-  const [selectedYear, setSelectedYear] = useState("2026")
+  const now = new Date()
+  const [selectedMonth, setSelectedMonth] = useState(String(now.getMonth() + 1))
+  const [selectedYear, setSelectedYear] = useState(String(now.getFullYear()))
 
   const { data: revRes, isLoading: loadingRev } = useQuery({
     queryKey: ["reports-revenue"],
@@ -49,53 +44,52 @@ export function ReportsPage() {
       }),
   })
 
-  const revenueData = revRes?.data?.labels?.map((label, idx) => ({
-    name: label,
-    revenue: revRes.data?.data?.[idx] || 0,
-  })) || [
-    { name: "Jul", revenue: 240000 },
-    { name: "Aug", revenue: 285000 },
-    { name: "Sep", revenue: 310000 },
-    { name: "Oct", revenue: 395000 },
-    { name: "Nov", revenue: 345000 },
-  ]
+  const revenueData = (revRes?.data?.dailyBreakdown || []).map((d) => ({
+    name: new Date(d.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+    revenue: d.amount,
+  }))
 
-  const occupancyData = occRes?.data || [
-    { date: "01 Nov", occupancyRate: 65 },
-    { date: "03 Nov", occupancyRate: 72 },
-    { date: "05 Nov", occupancyRate: 85 },
-    { date: "07 Nov", occupancyRate: 60 },
-    { date: "09 Nov", occupancyRate: 90 },
-    { date: "11 Nov", occupancyRate: 78 },
-    { date: "13 Nov", occupancyRate: 82 },
-  ]
+  const occupancyData = (occRes?.data?.dailyBreakdown || []).slice(-14).map((d) => ({
+    date: new Date(d.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+    occupancyRate: d.occupancyRate,
+  }))
 
   const gstReport = gstRes?.data || {
-    month: "November",
-    year: 2026,
-    totalTaxable: 345000,
-    totalCgst: 20700,
-    totalSgst: 20700,
+    month: Number(selectedMonth),
+    year: Number(selectedYear),
+    totalTaxableAmount: 0,
+    totalCgst: 0,
+    totalSgst: 0,
     totalIgst: 0,
-    totalGst: 41400,
-    items: [
-      {
-        invoiceNumber: "INV-2026-0012",
-        date: "2026-11-13",
-        guestName: "Vikram Malhotra",
-        gstIn: "27XXXXX1234",
-        taxableValue: 10500,
-        cgst: 630,
-        sgst: 630,
-        igst: 0,
-        totalGst: 1260,
-        totalAmount: 11760,
-      },
-    ],
+    totalTax: 0,
+    totalInvoices: 0,
+    invoices: [],
   }
 
   const handleDownloadGST = () => {
-    toast({ title: `GST Report for ${selectedMonth}/${selectedYear} downloaded (CSV)` })
+    const headers = ["Invoice Number", "Date", "Guest Name", "GSTIN", "Taxable Value", "CGST", "SGST", "Total GST", "Total Amount"]
+    const rows = gstReport.invoices.map((it) => [
+      it.invoiceNumber,
+      new Date(it.invoiceDate).toISOString().split("T")[0],
+      `"${(it.guestName || "").replace(/"/g, '""')}"`,
+      it.guestGstin || "-",
+      it.taxableAmount.toFixed(2),
+      (it.taxAmount / 2).toFixed(2),
+      (it.taxAmount / 2).toFixed(2),
+      it.taxAmount.toFixed(2),
+      it.totalAmount.toFixed(2),
+    ])
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n")
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `GST-Report-${selectedYear}-${selectedMonth.padStart(2, "0")}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast({ title: `GST Report exported (${gstReport.invoices.length} invoices)` })
   }
 
   if (loadingRev || loadingOcc) {
@@ -117,43 +111,59 @@ export function ReportsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base font-semibold">Monthly Revenue Trend</CardTitle>
-            <CardDescription>Total earnings over the last 5 months</CardDescription>
+            <CardTitle className="text-base font-semibold">Daily Revenue Trend (Last 30 Days)</CardTitle>
+            <CardDescription>
+              Total billed revenue: ₹{(revRes?.data?.totalRevenue ?? 0).toLocaleString("en-IN")}
+            </CardDescription>
           </CardHeader>
           <CardContent className="h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" />
-                <YAxis tickFormatter={(val) => `₹${val / 1000}k`} />
-                <Tooltip formatter={(val: unknown) => [`₹${Number(val).toLocaleString("en-IN")}`, "Revenue"]} />
-                <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {revenueData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                No revenue transactions recorded in the last 30 days.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={revenueData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis tickFormatter={(val) => `₹${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`} />
+                  <Tooltip formatter={(val: unknown) => [`₹${Number(val).toLocaleString("en-IN")}`, "Revenue"]} />
+                  <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
         <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Occupancy Rate (%)</CardTitle>
-            <CardDescription>Daily occupancy percentage across property</CardDescription>
+            <CardDescription>
+              Average occupancy: {occRes?.data?.averageOccupancyRate ?? 0}% across {occRes?.data?.totalRooms ?? 0} rooms
+            </CardDescription>
           </CardHeader>
           <CardContent className="h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={occupancyData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="date" />
-                <YAxis domain={[0, 100]} tickFormatter={(val) => `${val}%`} />
-                <Tooltip formatter={(val: unknown) => [`${val}%`, "Occupancy"]} />
-                <Line
-                  type="monotone"
-                  dataKey="occupancyRate"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {occupancyData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                No occupancy history yet.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={occupancyData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" />
+                  <YAxis domain={[0, 100]} tickFormatter={(val) => `${val}%`} />
+                  <Tooltip formatter={(val: unknown) => [`${val}%`, "Occupancy"]} />
+                  <Line
+                    type="monotone"
+                    dataKey="occupancyRate"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -173,9 +183,9 @@ export function ReportsPage() {
               onChange={(e) => setSelectedMonth(e.target.value)}
               className="text-xs p-2 rounded-md border bg-background"
             >
-              <option value="11">November</option>
-              <option value="10">October</option>
-              <option value="09">September</option>
+              {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, idx) => (
+                <option key={m} value={String(idx + 1)}>{m}</option>
+              ))}
             </select>
             <select
               value={selectedYear}
@@ -194,55 +204,64 @@ export function ReportsPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="p-3 rounded-lg border bg-slate-50">
               <span className="text-xs text-muted-foreground">Total Taxable Value</span>
-              <p className="text-lg font-bold">₹{gstReport.totalTaxable.toLocaleString("en-IN")}</p>
+              <p className="text-lg font-bold">₹{(gstReport.totalTaxableAmount ?? 0).toLocaleString("en-IN")}</p>
             </div>
             <div className="p-3 rounded-lg border bg-slate-50">
-              <span className="text-xs text-muted-foreground">CGST (6%)</span>
-              <p className="text-lg font-bold">₹{gstReport.totalCgst.toLocaleString("en-IN")}</p>
+              <span className="text-xs text-muted-foreground">CGST (50%)</span>
+              <p className="text-lg font-bold">₹{(gstReport.totalCgst ?? 0).toLocaleString("en-IN")}</p>
             </div>
             <div className="p-3 rounded-lg border bg-slate-50">
-              <span className="text-xs text-muted-foreground">SGST (6%)</span>
-              <p className="text-lg font-bold">₹{gstReport.totalSgst.toLocaleString("en-IN")}</p>
+              <span className="text-xs text-muted-foreground">SGST (50%)</span>
+              <p className="text-lg font-bold">₹{(gstReport.totalSgst ?? 0).toLocaleString("en-IN")}</p>
             </div>
             <div className="p-3 rounded-lg border bg-slate-50">
               <span className="text-xs text-muted-foreground">Total GST Collected</span>
               <p className="text-lg font-bold text-emerald-600">
-                ₹{gstReport.totalGst.toLocaleString("en-IN")}
+                ₹{(gstReport.totalTax ?? 0).toLocaleString("en-IN")}
               </p>
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b text-muted-foreground text-left">
-                  <th className="py-2">Invoice #</th>
-                  <th className="py-2">Date</th>
-                  <th className="py-2">Customer</th>
-                  <th className="py-2">Customer GSTIN</th>
-                  <th className="py-2 text-right">Taxable</th>
-                  <th className="py-2 text-right">CGST</th>
-                  <th className="py-2 text-right">SGST</th>
-                  <th className="py-2 text-right">Total Invoice</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {gstReport.items.map((it) => (
-                  <tr key={it.invoiceNumber}>
-                    <td className="py-2.5 font-semibold text-primary">{it.invoiceNumber}</td>
-                    <td className="py-2.5">{it.date}</td>
-                    <td className="py-2.5">{it.guestName}</td>
-                    <td className="py-2.5 font-mono">{it.gstIn || "-"}</td>
-                    <td className="py-2.5 text-right">₹{it.taxableValue.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 text-right">₹{it.cgst.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 text-right">₹{it.sgst.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 text-right font-bold">
-                      ₹{it.totalAmount.toLocaleString("en-IN")}
-                    </td>
+            {gstReport.invoices.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No GST invoices recorded for {selectedMonth}/{selectedYear}.
+              </p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-muted-foreground text-left">
+                    <th className="py-2">Invoice #</th>
+                    <th className="py-2">Date</th>
+                    <th className="py-2">Customer</th>
+                    <th className="py-2">Customer GSTIN</th>
+                    <th className="py-2 text-right">Taxable</th>
+                    <th className="py-2 text-right">CGST</th>
+                    <th className="py-2 text-right">SGST</th>
+                    <th className="py-2 text-right">Total Invoice</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {gstReport.invoices.map((it) => {
+                    const halfTax = Math.round((it.taxAmount / 2) * 100) / 100
+                    return (
+                      <tr key={it.invoiceNumber}>
+                        <td className="py-2.5 font-semibold text-primary">{it.invoiceNumber}</td>
+                        <td className="py-2.5">{new Date(it.invoiceDate).toLocaleDateString("en-IN")}</td>
+                        <td className="py-2.5">{it.guestName}</td>
+                        <td className="py-2.5 font-mono">{it.guestGstin || "-"}</td>
+                        <td className="py-2.5 text-right">₹{it.taxableAmount.toLocaleString("en-IN")}</td>
+                        <td className="py-2.5 text-right">₹{halfTax.toLocaleString("en-IN")}</td>
+                        <td className="py-2.5 text-right">₹{halfTax.toLocaleString("en-IN")}</td>
+                        <td className="py-2.5 text-right font-bold">
+                          ₹{it.totalAmount.toLocaleString("en-IN")}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </CardContent>
       </Card>

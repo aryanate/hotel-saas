@@ -159,6 +159,12 @@ try
     app.UseIpRateLimiting();
     app.UseResponseCompression();
     app.UseHttpsRedirection();
+    var wwwrootPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+    if (!Directory.Exists(wwwrootPath))
+    {
+        Directory.CreateDirectory(wwwrootPath);
+    }
+    app.UseStaticFiles();
     app.UseRouting();
     app.UseCors("CorsPolicy");
 

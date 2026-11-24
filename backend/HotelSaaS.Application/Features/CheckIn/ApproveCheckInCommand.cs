@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HotelSaaS.Application.Features.CheckIn;
 
-public record ApproveCheckInCommand(Guid SessionId) : IRequest<bool>;
+public record ApproveCheckInCommand(Guid SessionId, Guid? RoomId = null) : IRequest<bool>;
 
 public class ApproveCheckInCommandHandler : IRequestHandler<ApproveCheckInCommand, bool>
 {
@@ -32,6 +32,9 @@ public class ApproveCheckInCommandHandler : IRequestHandler<ApproveCheckInComman
 
         var session = await _context.CheckInSessions
             .Include(s => s.Booking)
+                .ThenInclude(b => b!.Guest)
+                    .ThenInclude(g => g!.Documents)
+            .Include(s => s.Booking)
                 .ThenInclude(b => b!.BookingRooms)
                     .ThenInclude(br => br.Room)
             .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.HotelId == hotelId.Value, cancellationToken);
@@ -50,6 +53,39 @@ public class ApproveCheckInCommandHandler : IRequestHandler<ApproveCheckInComman
             session.Booking.Status = BookingStatus.CheckedIn;
             session.Booking.UpdatedBy = _currentUserService.UserId;
             session.Booking.UpdatedAt = DateTime.UtcNow;
+
+            if (session.Booking.Guest?.Documents != null)
+            {
+                foreach (var doc in session.Booking.Guest.Documents)
+                {
+                    doc.IsVerified = true;
+                    doc.VerifiedAt = DateTime.UtcNow;
+                    doc.VerifiedBy = _currentUserService.UserId;
+                }
+            }
+
+            if (request.RoomId.HasValue && !session.Booking.BookingRooms.Any(br => br.RoomId == request.RoomId.Value))
+            {
+                var room = await _context.Rooms
+                    .FirstOrDefaultAsync(r => r.Id == request.RoomId.Value && r.HotelId == hotelId.Value && !r.IsDeleted, cancellationToken);
+
+                if (room != null)
+                {
+                    _context.BookingRooms.Add(new Domain.Entities.BookingRoom
+                    {
+                        Id = Guid.NewGuid(),
+                        HotelId = hotelId.Value,
+                        BookingId = session.Booking.Id,
+                        RoomId = room.Id,
+                        PricePerNight = room.PricePerNight,
+                        CheckInDate = session.Booking.CheckInDate,
+                        CheckOutDate = session.Booking.CheckOutDate
+                    });
+                    room.Status = RoomStatus.Occupied;
+                    room.UpdatedBy = _currentUserService.UserId;
+                    room.UpdatedAt = DateTime.UtcNow;
+                }
+            }
 
             foreach (var br in session.Booking.BookingRooms)
             {

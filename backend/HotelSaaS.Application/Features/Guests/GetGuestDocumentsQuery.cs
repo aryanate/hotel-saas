@@ -40,6 +40,9 @@ public class GetGuestDocumentsQueryHandler : IRequestHandler<GetGuestDocumentsQu
             DocumentType = d.DocumentType,
             DocumentNumber = d.DocumentNumber,
             FileName = d.FileName,
+            StorageUrl = (!string.IsNullOrEmpty(d.StorageKey) && d.StorageKey != "manual-entry" && d.StorageKey.StartsWith("uploads"))
+                ? (d.StorageKey.StartsWith("/") ? d.StorageKey : $"/{d.StorageKey}")
+                : null,
             FileSizeBytes = d.FileSizeBytes,
             IsVerified = d.IsVerified,
             VerifiedAt = d.VerifiedAt,

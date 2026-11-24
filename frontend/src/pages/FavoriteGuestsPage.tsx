@@ -37,36 +37,7 @@ export function FavoriteGuestsPage() {
       }),
   })
 
-  const guests: Guest[] = (res?.data?.items || [
-    {
-      id: "g1",
-      hotelId: "h1",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      fullName: "Vikram Malhotra",
-      mobile: "9876543210",
-      email: "vikram@example.com",
-      totalVisits: 4,
-      totalSpending: 42000,
-      isFavorite: true,
-      marketingConsent: true,
-      preferences: "High floor, extra towels, king suite",
-    },
-    {
-      id: "g3",
-      hotelId: "h1",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      fullName: "Deepak Sharma",
-      mobile: "9988112233",
-      email: "deepak@example.com",
-      totalVisits: 7,
-      totalSpending: 96000,
-      isFavorite: true,
-      marketingConsent: false,
-      preferences: "Prefers morning newspaper, quiet wing",
-    },
-  ]) as Guest[]
+  const guests: Guest[] = res?.data?.items || []
 
   const totalPages = res?.data?.totalPages || 1
 

@@ -33,73 +33,92 @@ export function BookingDetailPage() {
   const { data: res, isLoading } = useQuery({
     queryKey: ["booking", id],
     queryFn: () => bookingService.getBookingById(id!),
+    enabled: !!id,
   })
 
-  const booking = res?.data || {
-    id: id || "b1",
-    bookingReference: "BK-9021",
-    status: "Confirmed",
-    source: "Manual",
-    checkInDate: "2026-11-15",
-    checkOutDate: "2026-11-18",
-    totalNights: 3,
-    numberOfAdults: 2,
-    numberOfChildren: 1,
-    specialRequests: "Quiet room away from elevator, extra towels please.",
-    guest: {
-      id: "g1",
-      fullName: "Vikram Malhotra",
-      mobile: "9876543210",
-      email: "vikram@example.com",
-    },
-    bookingRooms: [
-      { id: "br1", roomId: "r1", room: { roomNumber: "204" }, ratePerNight: 3500 },
-    ],
-  }
+  const booking = res?.data
 
   const confirmMutation = useMutation({
     mutationFn: () => bookingService.confirmBooking(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["booking", id] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
       toast({ title: "Booking confirmed" })
     },
+    onError: () => toast({ title: "Failed to confirm booking", variant: "destructive" }),
   })
 
   const checkInMutation = useMutation({
     mutationFn: () => bookingService.checkIn(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["booking", id] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
       toast({ title: "Guest checked in successfully" })
     },
+    onError: () => toast({ title: "Failed to check in guest", variant: "destructive" }),
   })
 
   const checkOutMutation = useMutation({
     mutationFn: () => bookingService.checkOut(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["booking", id] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
       toast({ title: "Guest checked out" })
       navigate(`/billing/new?bookingId=${id}`)
     },
+    onError: () => toast({ title: "Failed to check out guest", variant: "destructive" }),
   })
 
   const cancelMutation = useMutation({
     mutationFn: () => bookingService.cancelBooking(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["booking", id] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
+      setConfirmCancelOpen(false)
       toast({ title: "Booking cancelled" })
     },
+    onError: () => toast({ title: "Failed to cancel booking", variant: "destructive" }),
   })
 
   const sendCheckInLinkMutation = useMutation({
     mutationFn: () => bookingService.sendCheckInLink(id!),
-    onSuccess: () => {
-      toast({ title: "Check-in link dispatched via WhatsApp/SMS" })
+    onSuccess: (resp) => {
+      const url = resp.data?.checkInUrl
+      if (url && navigator.clipboard) {
+        navigator.clipboard.writeText(url).catch(() => {})
+      }
+      toast({
+        title: "Check-in link generated & copied!",
+        description: url ? `Share: ${url}` : "Dispatched via WhatsApp/SMS",
+      })
     },
+    onError: () => toast({ title: "Failed to send check-in link", variant: "destructive" }),
   })
 
   if (isLoading) {
     return <LoadingSpinner size="lg" className="h-64" />
   }
+
+  if (!booking) {
+    return (
+      <div className="text-center py-16 space-y-4">
+        <p className="text-lg font-semibold">Booking not found</p>
+        <Button variant="outline" onClick={() => navigate("/bookings")}>
+          Back to Bookings
+        </Button>
+      </div>
+    )
+  }
+
+  const assignedRooms = booking.rooms || booking.bookingRooms || []
+  const displayGuestName = booking.guestName || booking.guest?.fullName || "Guest"
+  const displayGuestMobile = booking.guestMobile || booking.guest?.mobile || "-"
+  const displayGuestEmail = booking.guestEmail || booking.guest?.email || "Not provided"
+  const nights = Math.max(1, booking.totalNights || 1)
+  const formatDate = (d?: string) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-")
 
   return (
     <div className="space-y-6">
@@ -171,15 +190,15 @@ export function BookingDetailPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 py-2 border-b">
                 <div>
                   <p className="text-xs text-muted-foreground">Check-in Date</p>
-                  <p className="text-sm font-semibold">{booking.checkInDate}</p>
+                  <p className="text-sm font-semibold">{formatDate(booking.checkInDate)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Check-out Date</p>
-                  <p className="text-sm font-semibold">{booking.checkOutDate}</p>
+                  <p className="text-sm font-semibold">{formatDate(booking.checkOutDate)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Total Duration</p>
-                  <p className="text-sm font-semibold">{booking.totalNights} Nights</p>
+                  <p className="text-sm font-semibold">{nights} Nights</p>
                 </div>
               </div>
 
@@ -215,22 +234,28 @@ export function BookingDetailPage() {
               <CardTitle className="text-base font-semibold">Assigned Rooms</CardTitle>
             </CardHeader>
             <CardContent>
-              {booking.bookingRooms && booking.bookingRooms.length > 0 ? (
+              {assignedRooms.length > 0 ? (
                 <div className="divide-y">
-                  {booking.bookingRooms.map((br) => (
-                    <div key={br.id} className="py-3 flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded bg-primary/10 text-primary">
-                          <Bed className="h-5 w-5" />
+                  {assignedRooms.map((br) => {
+                    const rate = br.pricePerNight ?? br.ratePerNight ?? 0
+                    const roomNum = br.roomNumber || br.room?.roomNumber || "Unassigned"
+                    return (
+                      <div key={br.roomId || br.id} className="py-3 flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded bg-primary/10 text-primary">
+                            <Bed className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="font-bold">
+                              Room {roomNum}{br.roomTypeName ? ` — ${br.roomTypeName}` : ""}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Rate: ₹{rate.toLocaleString("en-IN")}/night</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-bold">Room {br.room?.roomNumber || "Unassigned"}</p>
-                          <p className="text-xs text-muted-foreground">Rate: ₹{br.ratePerNight}/night</p>
-                        </div>
+                        <span className="font-semibold">₹{(rate * nights).toLocaleString("en-IN")}</span>
                       </div>
-                      <span className="font-semibold">₹{br.ratePerNight * booking.totalNights}</span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No rooms assigned yet.</p>
@@ -251,18 +276,18 @@ export function BookingDetailPage() {
                   <User className="h-5 w-5" />
                 </div>
                 <div>
-                  <h4 className="font-semibold text-sm">{booking.guest?.fullName}</h4>
-                  <p className="text-xs text-muted-foreground">{booking.guest?.mobile}</p>
+                  <h4 className="font-semibold text-sm">{displayGuestName}</h4>
+                  <p className="text-xs text-muted-foreground">{displayGuestMobile}</p>
                 </div>
               </div>
               <div className="text-xs space-y-1 pt-2 border-t text-muted-foreground">
-                <p>Email: {booking.guest?.email || "Not provided"}</p>
+                <p>Email: {displayGuestEmail}</p>
               </div>
               <Button
                 variant="outline"
                 size="sm"
                 className="w-full mt-2"
-                onClick={() => navigate(`/guests/${booking.guest?.id}`)}
+                onClick={() => navigate(`/guests/${booking.guestId || booking.guest?.id}`)}
               >
                 View Full Guest History
               </Button>

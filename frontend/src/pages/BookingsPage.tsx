@@ -28,58 +28,12 @@ export function BookingsPage() {
       }),
   })
 
-  const bookings: Booking[] = (res?.data?.items || [
-    {
-      id: "b1",
-      hotelId: "h1",
-      guestId: "g1",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      bookingReference: "BK-9021",
-      guest: { fullName: "Vikram Malhotra", mobile: "9876543210" },
-      status: "Confirmed",
-      source: "Manual",
-      checkInDate: "2026-11-15",
-      checkOutDate: "2026-11-18",
-      totalNights: 3,
-      numberOfAdults: 2,
-      numberOfChildren: 1,
-    },
-    {
-      id: "b2",
-      hotelId: "h1",
-      guestId: "g2",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      bookingReference: "BK-9022",
-      guest: { fullName: "Ananya Roy", mobile: "9123456789" },
-      status: "CheckedIn",
-      source: "QR",
-      checkInDate: "2026-11-13",
-      checkOutDate: "2026-11-16",
-      totalNights: 3,
-      numberOfAdults: 1,
-      numberOfChildren: 0,
-    },
-    {
-      id: "b3",
-      hotelId: "h1",
-      guestId: "g3",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      bookingReference: "BK-9023",
-      guest: { fullName: "Siddharth Jain", mobile: "9988776655" },
-      status: "Pending",
-      source: "Online",
-      checkInDate: "2026-11-14",
-      checkOutDate: "2026-11-15",
-      totalNights: 1,
-      numberOfAdults: 2,
-      numberOfChildren: 0,
-    },
-  ]) as Booking[]
+  const bookings: Booking[] = res?.data?.items || []
 
   const totalPages = res?.data?.totalPages || 1
+
+  const formatDate = (dateStr?: string) =>
+    dateStr ? new Date(dateStr).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "-"
 
   const columns: Column<Booking>[] = [
     {
@@ -91,8 +45,8 @@ export function BookingsPage() {
       header: "Guest",
       cell: (item) => (
         <div>
-          <p className="font-medium">{item.guest?.fullName || "Guest"}</p>
-          <p className="text-xs text-muted-foreground">{item.guest?.mobile}</p>
+          <p className="font-medium">{item.guestName || item.guest?.fullName || "Guest"}</p>
+          <p className="text-xs text-muted-foreground">{item.guestMobile || item.guest?.mobile || "-"}</p>
         </div>
       ),
     },
@@ -101,18 +55,25 @@ export function BookingsPage() {
       cell: (item) => (
         <div className="text-xs">
           <p>
-            {item.checkInDate} &rarr; {item.checkOutDate}
+            {formatDate(item.checkInDate)} &rarr; {formatDate(item.checkOutDate)}
           </p>
-          <p className="text-muted-foreground">{item.totalNights} nights</p>
+          <p className="text-muted-foreground">{Math.max(1, item.totalNights)} nights</p>
         </div>
       ),
     },
     {
-      header: "Guests",
+      header: "Rooms / Guests",
       cell: (item) => (
-        <span className="text-xs">
-          {item.numberOfAdults} Ad, {item.numberOfChildren} Ch
-        </span>
+        <div className="text-xs">
+          <p className="font-medium">
+            {item.rooms && item.rooms.length > 0
+              ? item.rooms.map((r) => `Room ${r.roomNumber}`).join(", ")
+              : "Walk-in / Unassigned"}
+          </p>
+          <p className="text-muted-foreground">
+            {item.numberOfAdults} Ad{item.numberOfChildren > 0 ? `, ${item.numberOfChildren} Ch` : ""}
+          </p>
+        </div>
       ),
     },
     {

@@ -59,7 +59,14 @@ export function CreateBookingPage() {
   const createMutation = useMutation({
     mutationFn: (values: BookingFormValues) =>
       bookingService.createBooking({
-        ...values,
+        guestName: values.guestName,
+        guestMobile: values.mobile,
+        guestEmail: values.email || undefined,
+        checkInDate: values.checkInDate,
+        checkOutDate: values.checkOutDate,
+        numberOfAdults: values.numberOfAdults,
+        numberOfChildren: values.numberOfChildren,
+        specialRequests: values.specialRequests,
         roomIds: selectedRoomIds,
         source: "Manual",
       }),
@@ -71,8 +78,9 @@ export function CreateBookingPage() {
         navigate("/bookings")
       }
     },
-    onError: () => {
-      toast({ title: "Failed to create booking", variant: "destructive" })
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to create booking", variant: "destructive" })
     },
   })
 
@@ -194,8 +202,9 @@ export function CreateBookingPage() {
                             : "border-border hover:bg-muted"
                         }`}
                       >
-                        <p className="text-sm">Room {r.roomNumber}</p>
-                        <p className="text-xs text-muted-foreground">{r.roomType?.name || "Standard"}</p>
+                        <p className="text-sm font-semibold">Room {r.roomNumber}</p>
+                        <p className="text-xs text-muted-foreground">{r.roomTypeName || r.roomType?.name || "Standard"}</p>
+                        <p className="text-xs font-medium text-primary mt-0.5">₹{(r.pricePerNight ?? 0).toLocaleString("en-IN")}/night</p>
                       </button>
                     )
                   })}

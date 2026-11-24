@@ -40,6 +40,7 @@ public class GetInvoicesQueryHandler : IRequestHandler<GetInvoicesQuery, PagedRe
         }
 
         var query = _context.Invoices
+            .Include(i => i.Booking)
             .Include(i => i.Items)
             .Include(i => i.Payments)
             .Where(i => i.HotelId == hotelId.Value && !i.IsDeleted);
@@ -79,6 +80,7 @@ public class GetInvoicesQueryHandler : IRequestHandler<GetInvoicesQuery, PagedRe
             Id = i.Id,
             HotelId = i.HotelId,
             BookingId = i.BookingId,
+            BookingReference = i.Booking?.BookingReference,
             InvoiceNumber = i.InvoiceNumber,
             InvoiceDate = i.InvoiceDate,
             GuestName = i.GuestName,

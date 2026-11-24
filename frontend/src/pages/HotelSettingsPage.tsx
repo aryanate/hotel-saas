@@ -37,10 +37,12 @@ export function HotelSettingsPage() {
       setPinCode(hotel.pinCode || "")
       setGstIn(hotel.gstIn || "")
       setInvoicePrefix(hotel.invoicePrefix || "INV")
-      setCheckInTime(hotel.checkInTime || "14:00")
-      setCheckOutTime(hotel.checkOutTime || "11:00")
+      setCheckInTime((hotel.checkInTime || "14:00").slice(0, 5))
+      setCheckOutTime((hotel.checkOutTime || "11:00").slice(0, 5))
     }
   }, [hotel])
+
+  const formatTimeOnly = (t: string) => (t && t.length === 5 ? `${t}:00` : t || "14:00:00")
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -56,8 +58,8 @@ export function HotelSettingsPage() {
         pinCode,
         gstIn,
         invoicePrefix,
-        checkInTime,
-        checkOutTime,
+        checkInTime: formatTimeOnly(checkInTime),
+        checkOutTime: formatTimeOnly(checkOutTime),
       })
       toast({ title: "Hotel preferences saved successfully" })
     } catch {

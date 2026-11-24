@@ -41,6 +41,7 @@ public class GuestDocumentDto
     public DocumentType DocumentType { get; set; }
     public string? DocumentNumber { get; set; }
     public string FileName { get; set; } = string.Empty;
+    public string? StorageUrl { get; set; }
     public long FileSizeBytes { get; set; }
     public bool IsVerified { get; set; }
     public DateTime? VerifiedAt { get; set; }

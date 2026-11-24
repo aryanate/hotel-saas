@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Building2, Users, CreditCard, ShieldCheck, ArrowRight } from "lucide-react"
+import { Building2, Users, CreditCard, CalendarCheck2, ArrowRight } from "lucide-react"
 import { Link } from "react-router-dom"
 import { get } from "@/services/api"
 import type { Hotel } from "@/types"
@@ -8,80 +8,62 @@ import { PageHeader } from "@/components/shared/PageHeader"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
 
+interface PlatformStats {
+  totalHotels: number
+  activeHotels: number
+  suspendedHotels: number
+  totalBookings: number
+  totalRevenue: number
+  totalActiveUsers: number
+  totalGuests: number
+}
+
 export function AdminDashboardPage() {
-  const { data: res, isLoading } = useQuery({
+  const { data: hotelsRes, isLoading: loadingHotels } = useQuery({
     queryKey: ["admin-hotels"],
     queryFn: () => get<Hotel[]>("/api/admin/hotels"),
   })
 
-  const hotels = res?.data || [
-    {
-      id: "h1",
-      name: "Grand Royal Palace",
-      ownerName: "Rajeev Kapoor",
-      email: "contact@grandroyal.com",
-      mobile: "9876543210",
-      city: "Mumbai",
-      numberOfRooms: 40,
-      isActive: true,
-      createdAt: "2026-10-01",
-    },
-    {
-      id: "h2",
-      name: "Seaside Heritage Resort",
-      ownerName: "Anita Rao",
-      email: "info@seaside.com",
-      mobile: "9123456780",
-      city: "Goa",
-      numberOfRooms: 65,
-      isActive: true,
-      createdAt: "2026-10-15",
-    },
-    {
-      id: "h3",
-      name: "Mountain Mist Haven",
-      ownerName: "Devendra Negi",
-      email: "mist@mountain.com",
-      mobile: "9988771122",
-      city: "Manali",
-      numberOfRooms: 25,
-      isActive: false,
-      createdAt: "2026-11-01",
-    },
-  ]
+  const { data: statsRes, isLoading: loadingStats } = useQuery({
+    queryKey: ["admin-stats"],
+    queryFn: () => get<PlatformStats>("/api/admin/stats"),
+  })
+
+  const hotels = hotelsRes?.data || []
+  const platformStats = statsRes?.data
 
   const stats = [
     {
       title: "Registered Properties",
-      value: "142",
-      subtitle: "+8 this month",
+      value: String(platformStats?.totalHotels ?? hotels.length),
+      subtitle: `${platformStats?.activeHotels ?? 0} active, ${platformStats?.suspendedHotels ?? 0} suspended`,
       icon: Building2,
       color: "text-blue-600 bg-blue-50",
     },
     {
-      title: "Active Rooms Cloud",
-      value: "4,820",
-      subtitle: "Across 24 states",
-      icon: Users,
+      title: "Total Bookings",
+      value: String(platformStats?.totalBookings ?? 0),
+      subtitle: `${platformStats?.totalGuests ?? 0} registered guests`,
+      icon: CalendarCheck2,
       color: "text-emerald-600 bg-emerald-50",
     },
     {
-      title: "Monthly SaaS ARR",
-      value: "₹3,54,000",
-      subtitle: "Active subscriptions",
+      title: "Total Billed Volume",
+      value: `₹${(platformStats?.totalRevenue ?? 0).toLocaleString("en-IN")}`,
+      subtitle: "Across all tenant hotels",
       icon: CreditCard,
       color: "text-purple-600 bg-purple-50",
     },
     {
-      title: "System Compliance",
-      value: "100%",
-      subtitle: "All tenants masked KYC",
-      icon: ShieldCheck,
+      title: "Active Users",
+      value: String(platformStats?.totalActiveUsers ?? 0),
+      subtitle: "Hotel managers & staff",
+      icon: Users,
       color: "text-amber-600 bg-amber-50",
     },
   ]
 
-  if (isLoading) {
+  if (loadingHotels || loadingStats) {
     return <LoadingSpinner size="lg" className="h-64" />
   }
 

@@ -1,22 +1,21 @@
-import { get, post, put } from "./api"
-import type { Campaign, CampaignRecipient, PagedResponse, MessageChannel } from "@/types"
+import { get, post, put, del } from "./api"
+import type { Campaign, CampaignRecipient, CampaignStatus } from "@/types"
 
 export interface CreateCampaignPayload {
-  title: string
-  subject: string
-  channel: MessageChannel
-  messageContent: string
-  scheduledFor?: string
-  recipientFilters?: {
-    onlyFavorites?: boolean
-    minVisits?: number
-    minSpend?: number
-  }
+  name: string
+  occasion: string
+  messageTemplate: string
+  scheduledAt?: string
+  onlyConsentGuests?: boolean
 }
 
 export const campaignService = {
-  async getCampaigns(params?: { page?: number; pageSize?: number }) {
-    return get<PagedResponse<Campaign>>("/api/campaigns", { params })
+  async getCampaigns(params?: { status?: CampaignStatus }) {
+    return get<Campaign[]>("/api/campaigns", { params })
+  },
+
+  async getCampaignById(id: string) {
+    return get<Campaign>(`/api/campaigns/${id}`)
   },
 
   async createCampaign(payload: CreateCampaignPayload) {
@@ -27,12 +26,16 @@ export const campaignService = {
     return put<Campaign>(`/api/campaigns/${id}`, payload)
   },
 
-  async scheduleCampaign(id: string, scheduledFor: string) {
-    return post<Campaign>(`/api/campaigns/${id}/schedule`, { scheduledFor })
+  async scheduleCampaign(id: string, scheduledAt: string) {
+    return post<Campaign>(`/api/campaigns/${id}/schedule`, { scheduledAt })
   },
 
   async sendCampaign(id: string) {
     return post<Campaign>(`/api/campaigns/${id}/send`)
+  },
+
+  async deleteCampaign(id: string) {
+    return del<boolean>(`/api/campaigns/${id}`)
   },
 
   async getRecipients(id: string) {

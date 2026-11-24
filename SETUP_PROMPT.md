@@ -106,9 +106,13 @@ STEP 2 — FRONTEND SETUP
     server: {
       host: "0.0.0.0",
       port: 5173,
-      allowedHosts: "all",
+      allowedHosts: true,
       proxy: {
         "/api": {
+          target: "http://localhost:5208",
+          changeOrigin: true,
+        },
+        "/uploads": {
           target: "http://localhost:5208",
           changeOrigin: true,
         },
@@ -167,8 +171,8 @@ Dashboard (desktop browser):
     http://localhost:5173
 
 Login credentials (seeded):
-    Email:    rahul@grandpalace.com
-    Password: Password123!
+    Hotel Manager: rahul@grandpalace.com  (or demo@grandpalace.com) / Password123!
+    Super Admin:   admin@hotelsaas.com / Password123!
 
 Mobile QR check-in test (phone on same Wi-Fi):
     http://YOUR_IP:5173/checkin/859ffd60-b4f1-49df-b2ee-0fe2737ca611

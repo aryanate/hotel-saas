@@ -2,8 +2,10 @@ import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Check, X, FileText, QrCode } from "lucide-react"
 import { get, post } from "@/services/api"
+import { roomService } from "@/services/room.service"
 import type { CheckInSession } from "@/types"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -36,104 +38,47 @@ export function CheckInPendingPage() {
   const queryClient = useQueryClient()
   const [selectedSession, setSelectedSession] = useState<CheckInSession | null>(null)
   const [docModalOpen, setDocModalOpen] = useState(false)
+  const [selectedRoomId, setSelectedRoomId] = useState<string>("")
 
   const { data: res, isLoading } = useQuery({
     queryKey: ["pending-checkins"],
     queryFn: () => get<CheckInSession[]>("/api/checkin/pending"),
   })
 
-  const sessions: CheckInSession[] = res?.data || [
-    {
-      id: "cs1",
-      hotelId: "h1",
-      createdAt: "2026-11-13T10:00:00Z",
-      updatedAt: "2026-11-13T10:00:00Z",
-      bookingId: "b1",
-      token: "tok_991823",
-      status: "Submitted",
-      expiresAt: "2026-11-14T10:00:00Z",
-      booking: {
-        id: "b1",
-        hotelId: "h1",
-        createdAt: "2026-11-13",
-        updatedAt: "2026-11-13",
-        guestId: "g1",
-        bookingReference: "BK-9021",
-        source: "QR",
-        status: "Pending",
-        numberOfAdults: 2,
-        numberOfChildren: 0,
-        checkInDate: "2026-11-14",
-        checkOutDate: "2026-11-17",
-        totalNights: 3,
-        guest: {
-          id: "g1",
-          hotelId: "h1",
-          createdAt: "2026-11-13",
-          updatedAt: "2026-11-13",
-          fullName: "Vikram Malhotra",
-          mobile: "9876543210",
-          totalVisits: 1,
-          totalSpending: 0,
-          isFavorite: false,
-          marketingConsent: true,
-        },
-      },
-    },
-    {
-      id: "cs2",
-      hotelId: "h1",
-      createdAt: "2026-11-13T11:00:00Z",
-      updatedAt: "2026-11-13T11:00:00Z",
-      bookingId: "b2",
-      token: "tok_991824",
-      status: "Submitted",
-      expiresAt: "2026-11-14T11:00:00Z",
-      booking: {
-        id: "b2",
-        hotelId: "h1",
-        createdAt: "2026-11-13",
-        updatedAt: "2026-11-13",
-        guestId: "g2",
-        bookingReference: "BK-9022",
-        source: "QR",
-        status: "Pending",
-        numberOfAdults: 1,
-        numberOfChildren: 0,
-        checkInDate: "2026-11-14",
-        checkOutDate: "2026-11-15",
-        totalNights: 1,
-        guest: {
-          id: "g2",
-          hotelId: "h1",
-          createdAt: "2026-11-13",
-          updatedAt: "2026-11-13",
-          fullName: "Sunita Roy",
-          mobile: "9123456780",
-          totalVisits: 2,
-          totalSpending: 12000,
-          isFavorite: true,
-          marketingConsent: true,
-        },
-      },
-    },
-  ]
+  const { data: roomsRes } = useQuery({
+    queryKey: ["rooms", "Available"],
+    queryFn: () => roomService.getRooms({ status: "Available" }),
+  })
+
+  const sessions: CheckInSession[] = Array.isArray(res?.data) ? res.data : []
+  const availableRooms = roomsRes?.data || []
 
   const approveMutation = useMutation({
-    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/approve`),
+    mutationFn: ({ id, roomId }: { id: string; roomId?: string }) =>
+      post(`/api/checkin/sessions/${id}/approve`, roomId ? { roomId } : {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pending-checkins"] })
-      toast({ title: "Digital registration approved and guest verified" })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+      toast({ title: "Digital registration approved and guest checked in" })
       setDocModalOpen(false)
+      setSelectedRoomId("")
+    },
+    onError: () => {
+      toast({ title: "Failed to approve check-in", variant: "destructive" })
     },
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/reject`),
+    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/reject`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pending-checkins"] })
       toast({ title: "Submission rejected" })
       setDocModalOpen(false)
+    },
+    onError: () => {
+      toast({ title: "Failed to reject submission", variant: "destructive" })
     },
   })
 
@@ -216,7 +161,7 @@ export function CheckInPendingPage() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => approveMutation.mutate(session.id)}
+                  onClick={() => approveMutation.mutate({ id: session.id })}
                   disabled={approveMutation.isPending}
                 >
                   <Check className="h-4 w-4 mr-1" /> Approve & Check In
@@ -249,7 +194,7 @@ export function CheckInPendingPage() {
                     {getDocLabel(selectedSession?.documentType)} — ID: {selectedSession.documentNumber ?? "N/A"}
                   </p>
                   <img
-                    src={`http://localhost:5208${selectedSession.documentUrl}`}
+                    src={selectedSession.documentUrl}
                     alt="Uploaded ID Document"
                     className="w-full max-h-64 object-contain rounded-md border bg-white"
                     onError={(e) => {
@@ -262,7 +207,7 @@ export function CheckInPendingPage() {
                     <FileText className="h-10 w-10 text-primary/50 mb-1" />
                     <span className="text-xs">Document uploaded (non-image file)</span>
                     <a
-                      href={`http://localhost:5208${selectedSession.documentUrl}`}
+                      href={selectedSession.documentUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs text-primary underline mt-1"
@@ -291,6 +236,25 @@ export function CheckInPendingPage() {
               )}
             </div>
 
+            {(!selectedSession?.roomNumbers || selectedSession.roomNumbers.length === 0) && availableRooms.length > 0 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="assignRoom" className="text-xs">Assign Room (Optional for Walk-In)</Label>
+                <select
+                  id="assignRoom"
+                  value={selectedRoomId}
+                  onChange={(e) => setSelectedRoomId(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs"
+                >
+                  <option value="">-- Assign Later --</option>
+                  {availableRooms.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      Room {r.roomNumber} — {r.roomTypeName || "Standard"} (₹{r.pricePerNight}/night)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="text-xs text-muted-foreground">
               &bull; Document and digital consent verified for check-in compliance under local hotel regulations.
             </div>
@@ -300,7 +264,13 @@ export function CheckInPendingPage() {
               Close
             </Button>
             <Button
-              onClick={() => selectedSession && approveMutation.mutate(selectedSession.id)}
+              onClick={() =>
+                selectedSession &&
+                approveMutation.mutate({
+                  id: selectedSession.id,
+                  roomId: selectedRoomId || undefined,
+                })
+              }
               disabled={approveMutation.isPending}
             >
               Approve Identification

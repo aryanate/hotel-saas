@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, UserPlus, Trash2, Shield } from "lucide-react"
+import { UserPlus, Trash2, Shield } from "lucide-react"
 import { staffService, type InviteStaffPayload } from "@/services/staff.service"
 import type { User } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -27,62 +27,42 @@ export function StaffPage() {
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
   const [mobile, setMobile] = useState("")
-  const [roleId, setRoleId] = useState("role-receptionist")
+  const [initialPassword, setInitialPassword] = useState("Password123!")
+  const [roleName, setRoleName] = useState("Receptionist")
 
   const { data: staffRes, isLoading } = useQuery({
     queryKey: ["staff-members"],
     queryFn: () => staffService.getStaff(),
   })
 
-  const staff: User[] = (staffRes?.data || [
-    {
-      id: "u1",
-      createdAt: "2026-10-01",
-      updatedAt: "2026-10-01",
-      email: "manager@hotel.com",
-      firstName: "Rajeev",
-      lastName: "Kapoor",
-      mobile: "9876543210",
-      isActive: true,
-      roles: ["Manager"],
-    },
-    {
-      id: "u2",
-      createdAt: "2026-10-05",
-      updatedAt: "2026-10-05",
-      email: "frontdesk@hotel.com",
-      firstName: "Pooja",
-      lastName: "Nair",
-      mobile: "9123456789",
-      isActive: true,
-      roles: ["Receptionist"],
-    },
-    {
-      id: "u3",
-      createdAt: "2026-10-10",
-      updatedAt: "2026-10-10",
-      email: "cleaning@hotel.com",
-      firstName: "Mohan",
-      lastName: "Singh",
-      mobile: "9988776655",
-      isActive: true,
-      roles: ["Housekeeping"],
-    },
-  ]) as User[]
+  const { data: rolesRes } = useQuery({
+    queryKey: ["staff-roles"],
+    queryFn: () => staffService.getRoles(),
+  })
+
+  const staff: User[] = Array.isArray(staffRes?.data) ? staffRes.data : []
+  const availableRoles = rolesRes?.data || [
+    { id: "HotelAdmin", name: "Hotel Admin", description: "Full hotel administrative access" },
+    { id: "Receptionist", name: "Receptionist", description: "Front desk, check-in, bookings" },
+    { id: "Housekeeping", name: "Housekeeping", description: "Room cleaning and status management" },
+    { id: "Accountant", name: "Accountant", description: "Invoicing, GST reports, payments" },
+  ]
 
   const inviteMutation = useMutation({
     mutationFn: (payload: InviteStaffPayload) => staffService.inviteStaff(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff-members"] })
-      toast({ title: "Staff invitation sent via email" })
+      toast({ title: "Staff member added successfully" })
       setInviteModalOpen(false)
       setEmail("")
       setFirstName("")
       setLastName("")
       setMobile("")
+      setInitialPassword("Password123!")
     },
-    onError: () => {
-      toast({ title: "Failed to invite staff", variant: "destructive" })
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to invite staff", variant: "destructive" })
     },
   })
 
@@ -96,8 +76,8 @@ export function StaffPage() {
 
   const handleInvite = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email || !firstName || !lastName) {
-      toast({ title: "Please fill required fields", variant: "destructive" })
+    if (!email || !firstName || !lastName || initialPassword.length < 8) {
+      toast({ title: "Fill all required fields (password min 8 chars)", variant: "destructive" })
       return
     }
     inviteMutation.mutate({
@@ -105,7 +85,8 @@ export function StaffPage() {
       firstName,
       lastName,
       mobile: mobile || undefined,
-      roleId,
+      initialPassword,
+      roles: [roleName],
     })
   }
 
@@ -139,8 +120,8 @@ export function StaffPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
-                    {user.firstName[0]}
-                    {user.lastName[0]}
+                    {user.firstName?.[0] || "S"}
+                    {user.lastName?.[0] || ""}
                   </div>
                   <span className="text-xs bg-slate-100 text-slate-800 px-2 py-1 rounded font-semibold border flex items-center gap-1">
                     <Shield className="h-3 w-3 text-primary" /> {user.roles?.[0] || "Staff"}
@@ -226,15 +207,30 @@ export function StaffPage() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="sPass">Initial Password *</Label>
+              <Input
+                id="sPass"
+                type="password"
+                minLength={8}
+                placeholder="Min 8 characters"
+                value={initialPassword}
+                onChange={(e) => setInitialPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label>Assigned Role *</Label>
-              <Select value={roleId} onValueChange={setRoleId}>
+              <Select value={roleName} onValueChange={setRoleName}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="role-manager">Hotel Manager (Full Control)</SelectItem>
-                  <SelectItem value="role-receptionist">Front Desk Receptionist (Check-in/Out, Invoicing)</SelectItem>
-                  <SelectItem value="role-housekeeping">Housekeeping (Room Status Updates)</SelectItem>
+                  {availableRoles.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.name} — {r.description}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

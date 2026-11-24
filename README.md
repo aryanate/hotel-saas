@@ -170,9 +170,10 @@ netsh advfirewall firewall add rule name="Vite Dev Server 5173" dir=in action=al
 
 **Default login credentials (seeded):**
 
-| Email | Password | Role |
-|-------|----------|------|
-| `rahul@grandpalace.com` | `Password123!` | Hotel Manager |
+| Role | Email | Password |
+|------|-------|----------|
+| Hotel Manager | `rahul@grandpalace.com` (or `demo@grandpalace.com`) | `Password123!` |
+| Super Admin | `admin@hotelsaas.com` | `Password123!` |
 
 ---
 
@@ -278,7 +279,6 @@ SQL Server LocalDB
 ## 🧪 Running Tests
 
 ```bash
-cd backend
 dotnet test
 ```
 
