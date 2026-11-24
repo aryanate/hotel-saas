@@ -1,0 +1,296 @@
+import Tesseract from "tesseract.js"
+
+export type SupportedIdType =
+  | "MaskedAadhaar"
+  | "Passport"
+  | "DrivingLicense"
+  | "VoterID"
+  | "PAN"
+
+export interface ExtractedIdDetails {
+  idType?: SupportedIdType
+  idNumber?: string
+  fullName?: string
+  address?: string
+  mobile?: string
+  extractedFields: string[]
+  rawText: string
+}
+
+const NOISE_PHRASES = [
+  "government of india",
+  "govt of india",
+  "unique identification",
+  "authority of india",
+  "uidai",
+  "mera aadhaar",
+  "meri pehchan",
+  "aadhaar",
+  "income tax",
+  "permanent account",
+  "election commission",
+  "driving licence",
+  "driving license",
+  "republic of india",
+  "passport",
+  "enrolment",
+  "enrollment",
+  "download",
+  "issue date",
+  "valid till",
+  "signature",
+  "father",
+  "husband",
+  "mother",
+  "address",
+  "female",
+  "male",
+  "transgender",
+  "year of birth",
+  "dob",
+  "yob",
+  "vid",
+  "help@",
+  "www.",
+]
+
+function isBoilerplateLine(line: string): boolean {
+  const lower = line.toLowerCase()
+  return NOISE_PHRASES.some((phrase) => lower.includes(phrase))
+}
+
+function cleanNameCandidate(line: string): string {
+  return line
+    .replace(/[^A-Za-z.\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function isLikelyPersonName(line: string): boolean {
+  if (!line || isBoilerplateLine(line)) return false
+  // Reject lines with lots of digits or symbols
+  if (/\d/.test(line)) return false
+  const cleaned = cleanNameCandidate(line)
+  const words = cleaned.split(" ").filter((w) => w.length >= 2)
+  if (words.length < 2 || words.length > 4) return false
+  if (cleaned.length < 5 || cleaned.length > 45) return false
+  // Must look mostly alphabetic
+  const alphaRatio = cleaned.replace(/\s/g, "").length / Math.max(1, line.trim().length)
+  return alphaRatio > 0.75
+}
+
+function toTitleCase(name: string): string {
+  return name
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ")
+}
+
+/**
+ * Downscales large phone camera photos and boosts grayscale contrast for fast, accurate OCR.
+ */
+async function preprocessImageForOcr(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error("Could not load image"))
+      el.src = objectUrl
+    })
+
+    const maxDim = 1400
+    let width = img.naturalWidth || img.width
+    let height = img.naturalHeight || img.height
+    if (width > maxDim || height > maxDim) {
+      const ratio = Math.min(maxDim / width, maxDim / height)
+      width = Math.round(width * ratio)
+      height = Math.round(height * ratio)
+    }
+
+    const canvas = document.createElement("canvas")
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return objectUrl
+
+    ctx.filter = "grayscale(100%) contrast(135%) brightness(105%)"
+    ctx.drawImage(img, 0, 0, width, height)
+    return canvas.toDataURL("image/png")
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+/**
+ * Parses raw OCR text from Aadhaar, PAN, Driving License, Voter ID, or Passport.
+ */
+export function parseIndianIdText(rawText: string): ExtractedIdDetails {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 1)
+
+  const upperText = rawText.toUpperCase()
+  let idType: SupportedIdType | undefined
+  let idNumber: string | undefined
+  let fullName: string | undefined
+  let address: string | undefined
+  let mobile: string | undefined
+
+  // 1. Passport MRZ check (P<IND...)
+  const mrzMatch = upperText.match(/P<IND([A-Z]+)<<([A-Z<]+)/)
+  if (mrzMatch || upperText.includes("PASSPORT") || upperText.includes("REPUBLIC OF INDIA")) {
+    idType = "Passport"
+    if (mrzMatch) {
+      const surname = mrzMatch[1].replace(/</g, " ").trim()
+      const given = mrzMatch[2].replace(/</g, " ").trim()
+      const combined = `${given} ${surname}`.trim()
+      if (combined.length >= 3) fullName = toTitleCase(combined)
+    }
+    const passNo = upperText.match(/\b([A-Z][0-9]{7})\b/)
+    if (passNo) idNumber = passNo[1]
+  }
+
+  // 2. PAN Card check (ABCDE1234F)
+  const panMatch = upperText.match(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/)
+  if (!idType && (panMatch || upperText.includes("INCOME TAX") || upperText.includes("PERMANENT ACCOUNT"))) {
+    idType = "PAN"
+    if (panMatch) idNumber = panMatch[1]
+  }
+
+  // 3. Driving License check (MH12 20200012345 or MH-12-2020-0012345)
+  const dlMatch = upperText.match(/\b([A-Z]{2}[-\s]?\d{2}[-\s]?(?:19|20)\d{2}[-\s]?\d{6,7})\b/)
+  if (!idType && (dlMatch || upperText.includes("DRIVING LICEN"))) {
+    idType = "DrivingLicense"
+    if (dlMatch) idNumber = dlMatch[1].replace(/\s+/g, "-")
+  }
+
+  // 4. Voter ID check (EPIC ABC1234567)
+  const voterMatch = upperText.match(/\b([A-Z]{3}[0-9]{7})\b/)
+  if (!idType && (upperText.includes("ELECTION COMMISSION") || (voterMatch && !panMatch))) {
+    idType = "VoterID"
+    if (voterMatch) idNumber = voterMatch[1]
+  }
+
+  // 5. Aadhaar Card check (12 digits or XXXX XXXX 1234)
+  const maskedAadhaarMatch = upperText.match(/\b([X*]{4}[\s-]?[X*]{4}[\s-]?\d{4})\b/)
+  const fullAadhaarMatch = rawText.match(/(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)/)
+  if (
+    !idType &&
+    (maskedAadhaarMatch ||
+      fullAadhaarMatch ||
+      upperText.includes("AADHAAR") ||
+      upperText.includes("UIDAI") ||
+      upperText.includes("GOVERNMENT OF INDIA"))
+  ) {
+    idType = "MaskedAadhaar"
+    if (fullAadhaarMatch) {
+      idNumber = `${fullAadhaarMatch[1]}-${fullAadhaarMatch[2]}-${fullAadhaarMatch[3]}`
+    } else if (maskedAadhaarMatch) {
+      idNumber = maskedAadhaarMatch[1].replace(/[*]/g, "X").replace(/\s+/g, "-")
+    }
+  }
+
+  // 6. Extract Name if not already extracted from Passport MRZ
+  if (!fullName) {
+    // Look for line immediately above DOB / Year of Birth (standard Aadhaar / PAN layout)
+    const dobIdx = lines.findIndex((l) =>
+      /\b(dob|d\.o\.b|birth|yob|father|male|female)\b/i.test(l)
+    )
+    if (dobIdx > 0) {
+      for (let i = dobIdx - 1; i >= Math.max(0, dobIdx - 3); i--) {
+        if (isLikelyPersonName(lines[i])) {
+          fullName = toTitleCase(cleanNameCandidate(lines[i]))
+          break
+        }
+      }
+    }
+
+    // Explicit "Name:" label fallback
+    if (!fullName) {
+      const nameLabelIdx = lines.findIndex((l) => /^name\s*[:\-]/i.test(l))
+      if (nameLabelIdx >= 0) {
+        const inline = lines[nameLabelIdx].replace(/^name\s*[:\-]\s*/i, "").trim()
+        if (isLikelyPersonName(inline)) {
+          fullName = toTitleCase(cleanNameCandidate(inline))
+        } else if (nameLabelIdx + 1 < lines.length && isLikelyPersonName(lines[nameLabelIdx + 1])) {
+          fullName = toTitleCase(cleanNameCandidate(lines[nameLabelIdx + 1]))
+        }
+      }
+    }
+
+    // Final fallback: first clean 2-3 word name line
+    if (!fullName) {
+      const candidate = lines.find((l) => isLikelyPersonName(l))
+      if (candidate) fullName = toTitleCase(cleanNameCandidate(candidate))
+    }
+  }
+
+  // 7. Extract Mobile Number (10 digits starting 6-9, not inside Aadhaar 12-digit block)
+  const mobileLabelMatch = rawText.match(/(?:mobile|mob|ph|phone)[^\d]{0,8}([6-9]\d{9})\b/i)
+  if (mobileLabelMatch) {
+    mobile = mobileLabelMatch[1]
+  } else {
+    const standaloneMob = rawText.match(/(?<![\d-])([6-9]\d{9})(?![\d-])/)
+    if (standaloneMob) mobile = standaloneMob[1]
+  }
+
+  // 8. Extract Address (after "Address:" / "C/O" / "S/O" / "D/O" / "W/O" up to 6-digit PIN code)
+  const addrStartIdx = lines.findIndex((l) =>
+    /\b(address|c\/o|s\/o|d\/o|w\/o|to\s*:)\b/i.test(l)
+  )
+  const pinIdx = lines.findIndex((l) => /\b[1-9]\d{5}\b/.test(l))
+
+  if (addrStartIdx >= 0) {
+    const endIdx = pinIdx >= addrStartIdx ? pinIdx : Math.min(lines.length - 1, addrStartIdx + 4)
+    const slice = lines
+      .slice(addrStartIdx, endIdx + 1)
+      .map((l) => l.replace(/^address\s*[:\-]?\s*/i, "").trim())
+      .filter((l) => l.length > 1 && !/^\d{4}\s?\d{4}\s?\d{4}$/.test(l))
+    const joined = slice.join(", ").replace(/,\s*,+/g, ", ").trim()
+    if (joined.length >= 10) address = joined
+  } else if (pinIdx > 0) {
+    const startIdx = Math.max(0, pinIdx - 3)
+    const slice = lines
+      .slice(startIdx, pinIdx + 1)
+      .filter((l) => !isBoilerplateLine(l) && !/^\d{4}\s?\d{4}\s?\d{4}$/.test(l))
+    const joined = slice.join(", ").replace(/,\s*,+/g, ", ").trim()
+    if (joined.length >= 10) address = joined
+  }
+
+  const extractedFields: string[] = []
+  if (idType) extractedFields.push("ID Type")
+  if (idNumber) extractedFields.push("ID Number")
+  if (fullName) extractedFields.push("Full Name")
+  if (mobile) extractedFields.push("Mobile")
+  if (address) extractedFields.push("Address")
+
+  return {
+    idType,
+    idNumber,
+    fullName,
+    address,
+    mobile,
+    extractedFields,
+    rawText,
+  }
+}
+
+export async function extractDetailsFromIdImage(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<ExtractedIdDetails> {
+  const imageData = await preprocessImageForOcr(file)
+  const result = await Tesseract.recognize(imageData, "eng", {
+    logger: (m) => {
+      if (m.status === "recognizing text" && typeof m.progress === "number" && onProgress) {
+        onProgress(Math.round(m.progress * 100))
+      }
+    },
+  })
+
+  return parseIndianIdText(result.data.text || "")
+}

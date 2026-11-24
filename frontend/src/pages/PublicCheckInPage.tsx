@@ -5,15 +5,18 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import {
-  Upload,
+  Camera,
   CheckCircle2,
   ShieldCheck,
   Hotel as HotelIcon,
   AlertCircle,
   Calendar,
   BookmarkCheck,
+  Sparkles,
+  ScanLine,
 } from "lucide-react"
 import { get, apiClient } from "@/services/api"
+import { extractDetailsFromIdImage } from "@/lib/idOcrExtractor"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -50,6 +53,11 @@ type CheckInFormValues = z.infer<typeof checkInSchema>
 export function PublicCheckInPage() {
   const { token } = useParams<{ token: string }>()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
+  const [scanProgress, setScanProgress] = useState(0)
+  const [extractedSummary, setExtractedSummary] = useState<string[]>([])
+  const [scanNotice, setScanNotice] = useState<string | null>(null)
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -67,6 +75,8 @@ export function PublicCheckInPage() {
     register,
     handleSubmit,
     setValue,
+    watch,
+    getValues,
     formState: { errors },
   } = useForm<CheckInFormValues>({
     resolver: zodResolver(checkInSchema),
@@ -81,6 +91,82 @@ export function PublicCheckInPage() {
       marketingConsent: true,
     },
   })
+
+  const currentIdType = watch("idType")
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
+
+  const runIdOcr = async (file: File, mergeOnly: boolean) => {
+    if (!file.type.startsWith("image/")) {
+      setScanNotice("PDF attached — please verify your details below.")
+      return
+    }
+
+    setIsScanning(true)
+    setScanProgress(5)
+    setScanNotice(null)
+    try {
+      const extracted = await extractDetailsFromIdImage(file, (pct) => setScanProgress(pct))
+      const filled: string[] = []
+
+      if (extracted.idType && (!mergeOnly || !getValues("idNumber"))) {
+        setValue("idType", extracted.idType, { shouldValidate: true })
+        filled.push("ID Type")
+      }
+      if (extracted.idNumber && (!mergeOnly || !getValues("idNumber"))) {
+        setValue("idNumber", extracted.idNumber, { shouldValidate: true })
+        filled.push("ID Number")
+      }
+      if (extracted.fullName && (!mergeOnly || !getValues("fullName"))) {
+        setValue("fullName", extracted.fullName, { shouldValidate: true })
+        filled.push("Full Name")
+      }
+      if (extracted.mobile && (!mergeOnly || !getValues("mobile"))) {
+        setValue("mobile", extracted.mobile, { shouldValidate: true })
+        filled.push("Mobile")
+      }
+      if (extracted.address && (!mergeOnly || !getValues("address"))) {
+        setValue("address", extracted.address, { shouldValidate: true })
+        filled.push("Address")
+      }
+
+      if (mergeOnly) {
+        setExtractedSummary((prev) => Array.from(new Set([...prev, ...filled])))
+      } else {
+        setExtractedSummary(filled)
+      }
+
+      if (filled.length === 0) {
+        setScanNotice("Photo attached! Could not read text clearly — please fill or verify details below.")
+      }
+    } catch {
+      setScanNotice("Photo attached! Please fill or verify details below.")
+    } finally {
+      setIsScanning(false)
+      setScanProgress(0)
+    }
+  }
+
+  const handleFrontIdSelect = async (file: File | null) => {
+    if (!file) return
+    setSelectedFile(file)
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    if (file.type.startsWith("image/")) {
+      setPreviewUrl(URL.createObjectURL(file))
+    } else {
+      setPreviewUrl(null)
+    }
+    await runIdOcr(file, false)
+  }
+
+  const handleBackIdSelect = async (file: File | null) => {
+    if (!file) return
+    await runIdOcr(file, true)
+  }
 
   useEffect(() => {
     if (checkInData) {
@@ -130,17 +216,15 @@ export function PublicCheckInPage() {
   }
 
   if (error || (checkInData && checkInData.isExpired)) {
-    const axiosErr = error as { response?: { status?: number; data?: { message?: string } }; message?: string; code?: string }
-    const httpStatus = axiosErr?.response?.status
+    const axiosErr = error as { response?: { data?: { message?: string } }; message?: string }
     const apiMsg = axiosErr?.response?.data?.message
     const networkMsg = axiosErr?.message
-    const errCode = axiosErr?.code
 
     const displayMsg = checkInData?.isExpired
       ? "This digital registration link has expired. Please request a new link or complete check-in at the hotel front desk."
       : apiMsg
         ? apiMsg
-        : networkMsg
+        : networkMsg && !networkMsg.includes("Network Error")
           ? networkMsg
           : "We could not find an active check-in session for this link."
 
@@ -154,13 +238,6 @@ export function PublicCheckInPage() {
             {checkInData?.isExpired ? "Check-In Link Expired" : "Invalid Check-In Link"}
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">{displayMsg}</p>
-          {/* Debug info - remove after fix */}
-          <div className="mt-3 p-2 bg-slate-100 rounded text-left text-xs text-slate-500 font-mono break-all">
-            <div>Token: {token}</div>
-            {httpStatus && <div>HTTP: {httpStatus}</div>}
-            {errCode && <div>Code: {errCode}</div>}
-            {networkMsg && <div>Err: {networkMsg}</div>}
-          </div>
           <div className="mt-4 flex flex-col gap-2">
             <Button variant="default" onClick={() => window.location.reload()} className="w-full">
               Retry
@@ -228,6 +305,105 @@ export function PublicCheckInPage() {
                 </div>
               )}
 
+              {/* Step 1: Smart ID Upload & Auto-Fill */}
+              <div className="rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-bold text-foreground">
+                      Quick Auto-Fill via Govt ID Photo
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-medium text-primary bg-white px-2 py-0.5 rounded-full border">
+                    Aadhaar / PAN / DL / Passport
+                  </span>
+                </div>
+
+                <input
+                  type="file"
+                  id="idFile"
+                  className="hidden"
+                  onChange={(e) => handleFrontIdSelect(e.target.files?.[0] ?? null)}
+                  accept="image/*,application/pdf"
+                />
+
+                <label
+                  htmlFor="idFile"
+                  className="block cursor-pointer rounded-lg border bg-white p-3 hover:border-primary transition-colors"
+                >
+                  {isScanning ? (
+                    <div className="space-y-2 py-2 text-center">
+                      <div className="flex items-center justify-center gap-2 text-primary text-sm font-semibold">
+                        <ScanLine className="h-4 w-4 animate-pulse" />
+                        <span>Reading details from ID... {scanProgress}%</span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-primary h-full transition-all duration-200"
+                          style={{ width: `${Math.max(10, scanProgress)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : selectedFile ? (
+                    <div className="flex items-center gap-3">
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt="ID Preview"
+                          className="h-14 w-20 object-cover rounded border shrink-0"
+                        />
+                      ) : (
+                        <CheckCircle2 className="h-10 w-10 text-emerald-600 shrink-0" />
+                      )}
+                      <div className="min-w-0 flex-1 text-left">
+                        <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> ID Photo Attached
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">{selectedFile.name}</p>
+                        <p className="text-[11px] text-primary mt-0.5 font-medium">
+                          Tap to retake / change photo
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center text-center py-2 text-muted-foreground">
+                      <Camera className="h-8 w-8 mb-1.5 text-primary" />
+                      <span className="text-sm font-semibold text-foreground">
+                        Snap or Upload Govt ID Front
+                      </span>
+                      <span className="text-xs">
+                        Auto-fills your name, ID number &amp; address — no manual typing!
+                      </span>
+                    </div>
+                  )}
+                </label>
+
+                {extractedSummary.length > 0 && !isScanning && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-2 rounded-lg">
+                    <span>
+                      <strong>Auto-filled:</strong> {extractedSummary.join(", ")} (verify below)
+                    </span>
+                    {!getValues("address") && (
+                      <label className="text-primary font-semibold underline cursor-pointer shrink-0">
+                        Scan Back Side for Address
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept="image/*"
+                          onChange={(e) => handleBackIdSelect(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {scanNotice && !isScanning && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                    {scanNotice}
+                  </p>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="fullName">Full Name (as per Govt ID) *</Label>
                 <Input
@@ -275,8 +451,8 @@ export function PublicCheckInPage() {
                   <Label htmlFor="idType">Govt ID Type *</Label>
                   <select
                     id="idType"
-                    defaultValue="MaskedAadhaar"
-                    onChange={(e) => setValue("idType", e.target.value)}
+                    value={currentIdType}
+                    onChange={(e) => setValue("idType", e.target.value, { shouldValidate: true })}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                   >
                     <option value="MaskedAadhaar">Aadhaar Card</option>
@@ -295,36 +471,6 @@ export function PublicCheckInPage() {
                     {...register("idNumber")}
                   />
                   {errors.idNumber && <p className="text-xs text-destructive">{errors.idNumber.message}</p>}
-                </div>
-              </div>
-
-              {/* Document photo upload */}
-              <div className="space-y-2 pt-2">
-                <Label>Upload Photo of Govt ID (Optional)</Label>
-                <div className="border-2 border-dashed rounded-xl p-5 text-center hover:border-primary transition-colors cursor-pointer bg-slate-50">
-                  <input
-                    type="file"
-                    id="idFile"
-                    className="hidden"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-                    accept="image/*,application/pdf"
-                  />
-                  <label htmlFor="idFile" className="cursor-pointer block">
-                    {selectedFile ? (
-                      <div className="flex flex-col items-center text-emerald-600">
-                        <CheckCircle2 className="h-8 w-8 mb-1" />
-                        <span className="text-sm font-semibold">Document Attached</span>
-                        <span className="text-xs text-muted-foreground truncate max-w-[200px]">{selectedFile.name}</span>
-                        <span className="text-xs text-muted-foreground">Tap to choose a different photo</span>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center text-muted-foreground">
-                        <Upload className="h-8 w-8 mb-1 text-primary" />
-                        <span className="text-sm font-semibold text-foreground">Click or tap to snap / upload ID</span>
-                        <span className="text-xs">Supports Camera photo, JPG, PNG up to 10MB</span>
-                      </div>
-                    )}
-                  </label>
                 </div>
               </div>
 
