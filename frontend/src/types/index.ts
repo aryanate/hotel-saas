@@ -148,6 +148,7 @@ export interface User extends BaseEntity {
   lastName: string
   mobile?: string | null
   isActive: boolean
+  isSuperAdmin?: boolean
   roles?: string[]
 }
 
@@ -161,34 +162,40 @@ export interface RoomType extends TenantEntity {
   name: string
   description?: string | null
   basePrice: number
-  capacityAdults: number
-  capacityChildren: number
-  amenities?: string[] | null
-  roomsCount?: number
+  maxCapacity: number
+  totalRooms?: number
 }
 
 export interface Room extends TenantEntity {
   roomTypeId: string
+  roomTypeName?: string | null
   roomType?: RoomType
   roomNumber: string
-  floor?: string | null
+  floor: number
+  capacity: number
+  pricePerNight: number
+  description?: string | null
   status: RoomStatus
   notes?: string | null
-  isActive: boolean
+  isActive?: boolean
 }
 
 export interface GuestDocument extends TenantEntity {
-  guestId: string
+  guestId?: string
   documentType: DocumentType
-  documentNumberMasked: string
-  fileUrl: string
+  documentNumber?: string | null
+  fileName: string
+  storageUrl?: string | null
+  fileSizeBytes?: number
+  isVerified?: boolean
   verifiedAt?: string | null
   verifiedBy?: string | null
 }
 
 export interface GuestNote extends TenantEntity {
-  guestId: string
-  noteText: string
+  guestId?: string
+  note: string
+  noteText?: string
   createdBy?: string
   createdAt: string
 }
@@ -219,11 +226,16 @@ export interface Guest extends TenantEntity {
 }
 
 export interface BookingRoom {
-  id: string
-  bookingId: string
+  id?: string
+  bookingId?: string
   roomId: string
+  roomNumber: string
+  roomTypeName?: string | null
+  pricePerNight: number
+  checkInDate?: string
+  checkOutDate?: string
   room?: Room
-  ratePerNight: number
+  ratePerNight?: number
 }
 
 export interface BookingGuest {
@@ -236,6 +248,9 @@ export interface BookingGuest {
 
 export interface Booking extends TenantEntity {
   guestId: string
+  guestName?: string
+  guestMobile?: string
+  guestEmail?: string | null
   guest?: Guest
   bookingReference: string
   source: BookingSource
@@ -246,6 +261,8 @@ export interface Booking extends TenantEntity {
   checkOutDate: string
   specialRequests?: string | null
   totalNights: number
+  totalAmount?: number
+  rooms?: BookingRoom[]
   bookingRooms?: BookingRoom[]
   bookingGuests?: BookingGuest[]
   invoices?: Invoice[]
@@ -267,6 +284,7 @@ export interface CheckInSession extends TenantEntity {
   documentType?: string
   documentNumber?: string
   documentUrl?: string
+  documentUrls?: string[]
   bookingReference?: string
   checkInDate?: string
   checkOutDate?: string
@@ -290,6 +308,7 @@ export interface Payment extends TenantEntity {
   invoiceId: string
   amount: number
   paymentMethod: PaymentMethod
+  reference?: string | null
   transactionReference?: string | null
   paymentDate: string
   notes?: string | null
@@ -297,16 +316,23 @@ export interface Payment extends TenantEntity {
 
 export interface Invoice extends TenantEntity {
   bookingId: string
+  bookingReference?: string | null
   booking?: Booking
   invoiceNumber: string
+  invoiceDate: string
+  guestName: string
+  guestMobile: string
+  guestGstin?: string | null
   status: InvoiceStatus
   subTotal: number
   taxAmount: number
   discountAmount: number
   totalAmount: number
-  paidAmount: number
-  balanceAmount: number
-  issueDate: string
+  amountPaid: number
+  outstandingBalance: number
+  paidAmount?: number
+  balanceAmount?: number
+  issueDate?: string
   dueDate?: string | null
   notes?: string | null
   items?: InvoiceItem[]
@@ -317,23 +343,24 @@ export interface CampaignRecipient {
   id: string
   campaignId: string
   guestId: string
-  guest?: Guest
-  recipientAddress: string
+  guestName?: string | null
+  mobile: string
+  channel: MessageChannel
   status: RecipientStatus
   sentAt?: string | null
-  errorMessage?: string | null
+  externalMessageId?: string | null
+  errorReason?: string | null
 }
 
 export interface Campaign extends TenantEntity {
-  title: string
-  subject: string
-  channel: MessageChannel
-  messageContent: string
+  name: string
+  occasion: string
+  messageTemplate: string
   status: CampaignStatus
-  scheduledFor?: string | null
+  scheduledAt?: string | null
   sentAt?: string | null
   totalRecipients: number
-  successfulCount: number
+  sentCount: number
   failedCount: number
   recipients?: CampaignRecipient[]
 }
@@ -357,13 +384,11 @@ export interface RetentionPolicy extends BaseEntity {
 
 export interface SubscriptionPlan extends BaseEntity {
   name: string
-  code: string
   description?: string
-  priceMonthly: number
-  priceYearly: number
-  maxRooms: number
-  maxUsers: number
-  features?: string[] | null
+  price: number
+  billingCycle: string
+  maxBookingsPerMonth: number
+  featuresJson: string
   isActive: boolean
 }
 
@@ -395,33 +420,52 @@ export interface DashboardStats {
   recentRegistrations: Guest[]
 }
 
-export interface GSTReportItem {
+export interface GSTInvoiceSummary {
   invoiceNumber: string
-  date: string
+  invoiceDate: string
   guestName: string
-  gstIn?: string
-  taxableValue: number
-  cgst: number
-  sgst: number
-  igst: number
-  totalGst: number
+  guestGstin?: string | null
+  taxableAmount: number
+  taxAmount: number
   totalAmount: number
 }
 
 export interface GSTReport {
-  month: string
+  hotelGstIn?: string
+  month: number
   year: number
-  totalTaxable: number
+  totalTaxableAmount: number
   totalCgst: number
   totalSgst: number
   totalIgst: number
-  totalGst: number
-  items: GSTReportItem[]
+  totalTax: number
+  totalInvoices: number
+  invoices: GSTInvoiceSummary[]
+}
+
+export interface DailyRevenue {
+  date: string
+  amount: number
+  invoiceCount: number
+}
+
+export interface RevenueReport {
+  totalRevenue: number
+  roomRevenue: number
+  otherRevenue: number
+  totalTax: number
+  totalDiscounts: number
+  dailyBreakdown: DailyRevenue[]
+}
+
+export interface DailyOccupancy {
+  date: string
+  occupiedRooms: number
+  occupancyRate: number
 }
 
 export interface OccupancyReport {
-  date: string
+  averageOccupancyRate: number
   totalRooms: number
-  occupiedRooms: number
-  occupancyRate: number
+  dailyBreakdown: DailyOccupancy[]
 }

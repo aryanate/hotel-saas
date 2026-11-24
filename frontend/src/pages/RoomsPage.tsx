@@ -28,8 +28,11 @@ export function RoomsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [newRoomNumber, setNewRoomNumber] = useState("")
-  const [newRoomFloor, setNewRoomFloor] = useState("")
+  const [newRoomFloor, setNewRoomFloor] = useState("1")
   const [newRoomTypeId, setNewRoomTypeId] = useState("")
+  const [newRoomCapacity, setNewRoomCapacity] = useState(2)
+  const [newRoomPrice, setNewRoomPrice] = useState(1999)
+  const [newRoomDescription, setNewRoomDescription] = useState("")
 
   const { data: roomsRes, isLoading } = useQuery({
     queryKey: ["rooms", statusFilter],
@@ -48,17 +51,27 @@ export function RoomsPage() {
   const roomTypes = roomTypesRes?.data || []
 
   const createRoomMutation = useMutation({
-    mutationFn: (payload: { roomNumber: string; roomTypeId: string; floor?: string }) =>
-      roomService.createRoom(payload),
+    mutationFn: (payload: {
+      roomNumber: string
+      roomTypeId: string
+      floor: number
+      capacity: number
+      pricePerNight: number
+      description?: string
+    }) => roomService.createRoom(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["rooms"] })
+      queryClient.invalidateQueries({ queryKey: ["room-types"] })
       toast({ title: "Room added successfully" })
       setIsAddModalOpen(false)
       setNewRoomNumber("")
-      setNewRoomFloor("")
+      setNewRoomFloor("1")
+      setNewRoomTypeId("")
+      setNewRoomDescription("")
     },
-    onError: () => {
-      toast({ title: "Failed to add room", variant: "destructive" })
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to add room", variant: "destructive" })
     },
   })
 
@@ -79,6 +92,15 @@ export function RoomsPage() {
     },
   })
 
+  const handleRoomTypeChange = (typeId: string) => {
+    setNewRoomTypeId(typeId)
+    const selected = roomTypes.find((t) => t.id === typeId)
+    if (selected) {
+      setNewRoomCapacity(selected.maxCapacity || 2)
+      setNewRoomPrice(selected.basePrice || 1999)
+    }
+  }
+
   const handleAddRoom = (e: React.FormEvent) => {
     e.preventDefault()
     if (!newRoomNumber || !newRoomTypeId) {
@@ -88,7 +110,10 @@ export function RoomsPage() {
     createRoomMutation.mutate({
       roomNumber: newRoomNumber,
       roomTypeId: newRoomTypeId,
-      floor: newRoomFloor,
+      floor: Number(newRoomFloor) || 1,
+      capacity: Number(newRoomCapacity) || 2,
+      pricePerNight: Number(newRoomPrice) || 0,
+      description: newRoomDescription || undefined,
     })
   }
 
@@ -145,9 +170,10 @@ export function RoomsPage() {
                   <span className="text-xl font-bold tracking-tight">Room {room.roomNumber}</span>
                   <StatusBadge status={room.status} />
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  <p>Type: {room.roomType?.name || "Standard"}</p>
-                  <p>Floor: {room.floor || "1st Floor"}</p>
+                <div className="text-xs text-muted-foreground space-y-0.5">
+                  <p className="font-medium text-foreground/80">{room.roomTypeName || room.roomType?.name || "Standard"}</p>
+                  <p>Floor {room.floor ?? 1} &bull; Max {room.capacity ?? 2} guests</p>
+                  <p className="font-semibold text-primary">₹{(room.pricePerNight ?? 0).toLocaleString("en-IN")}/night</p>
                 </div>
               </div>
 
@@ -206,28 +232,32 @@ export function RoomsPage() {
             <DialogTitle>Add New Room</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAddRoom} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="roomNumber">Room Number / Identifier *</Label>
-              <Input
-                id="roomNumber"
-                placeholder="e.g. 101, 204B"
-                value={newRoomNumber}
-                onChange={(e) => setNewRoomNumber(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="floor">Floor / Wing</Label>
-              <Input
-                id="floor"
-                placeholder="e.g. 1st Floor, East Wing"
-                value={newRoomFloor}
-                onChange={(e) => setNewRoomFloor(e.target.value)}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="roomNumber">Room Number *</Label>
+                <Input
+                  id="roomNumber"
+                  placeholder="e.g. 108, 204B"
+                  value={newRoomNumber}
+                  onChange={(e) => setNewRoomNumber(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="floor">Floor *</Label>
+                <Input
+                  id="floor"
+                  type="number"
+                  min="0"
+                  placeholder="1"
+                  value={newRoomFloor}
+                  onChange={(e) => setNewRoomFloor(e.target.value)}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Room Category / Type *</Label>
-              <Select value={newRoomTypeId} onValueChange={setNewRoomTypeId}>
+              <Select value={newRoomTypeId} onValueChange={handleRoomTypeChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select room type" />
                 </SelectTrigger>
@@ -239,6 +269,37 @@ export function RoomsPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="capacity">Max Capacity</Label>
+                <Input
+                  id="capacity"
+                  type="number"
+                  min="1"
+                  value={newRoomCapacity}
+                  onChange={(e) => setNewRoomCapacity(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pricePerNight">Nightly Rate (₹)</Label>
+                <Input
+                  id="pricePerNight"
+                  type="number"
+                  min="0"
+                  value={newRoomPrice}
+                  onChange={(e) => setNewRoomPrice(Number(e.target.value))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="roomDesc">Description / View</Label>
+              <Input
+                id="roomDesc"
+                placeholder="e.g. Pool facing with balcony"
+                value={newRoomDescription}
+                onChange={(e) => setNewRoomDescription(e.target.value)}
+              />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsAddModalOpen(false)}>

@@ -82,30 +82,53 @@ public class PublicCheckInController : ControllerBase
         [FromForm] SubmitCheckInRequest request,
         CancellationToken cancellationToken)
     {
-        Stream? docStream = null;
-        string? docFileName = null;
+        var uploadedDocs = new List<UploadedDocumentItem>();
+        var formFiles = new List<IFormFile>();
 
-        if (request.DocumentFile != null && request.DocumentFile.Length > 0)
+        if (request.DocumentFiles != null && request.DocumentFiles.Count > 0)
         {
-            docStream = request.DocumentFile.OpenReadStream();
-            docFileName = request.DocumentFile.FileName;
+            formFiles.AddRange(request.DocumentFiles);
+        }
+        if (request.DocumentFile != null && request.DocumentFile.Length > 0 && !formFiles.Contains(request.DocumentFile))
+        {
+            formFiles.Add(request.DocumentFile);
         }
 
-        var command = new SubmitCheckInCommand
+        try
         {
-            Token = token,
-            FullName = request.FullName,
-            Email = request.Email,
-            Address = request.Address,
-            DocumentType = request.DocumentType,
-            DocumentNumber = request.DocumentNumber,
-            DocumentStream = docStream,
-            DocumentFileName = docFileName,
-            MarketingConsent = request.MarketingConsent
-        };
+            foreach (var file in formFiles)
+            {
+                if (file != null && file.Length > 0)
+                {
+                    uploadedDocs.Add(new UploadedDocumentItem(file.OpenReadStream(), file.FileName));
+                }
+            }
 
-        var result = await _mediator.Send(command, cancellationToken);
-        return Ok(ApiResponse<bool>.Ok(result, "Check-in submitted successfully."));
+            var command = new SubmitCheckInCommand
+            {
+                Token = token,
+                FullName = request.FullName,
+                Mobile = request.Mobile,
+                Email = request.Email,
+                Address = request.Address,
+                DocumentType = request.DocumentType,
+                DocumentNumber = request.DocumentNumber,
+                DocumentStream = uploadedDocs.FirstOrDefault()?.Stream,
+                DocumentFileName = uploadedDocs.FirstOrDefault()?.FileName,
+                Documents = uploadedDocs,
+                MarketingConsent = request.MarketingConsent
+            };
+
+            var result = await _mediator.Send(command, cancellationToken);
+            return Ok(ApiResponse<bool>.Ok(result, "Check-in submitted successfully."));
+        }
+        finally
+        {
+            foreach (var doc in uploadedDocs)
+            {
+                await doc.Stream.DisposeAsync();
+            }
+        }
     }
 
     [HttpGet("{token}/status")]
@@ -134,10 +157,12 @@ public class SubmitCheckInJsonRequest
 public class SubmitCheckInRequest
 {
     public string FullName { get; set; } = string.Empty;
+    public string? Mobile { get; set; }
     public string? Email { get; set; }
     public string? Address { get; set; }
     public DocumentType DocumentType { get; set; } = DocumentType.Other;
     public string? DocumentNumber { get; set; }
     public IFormFile? DocumentFile { get; set; }
+    public List<IFormFile>? DocumentFiles { get; set; }
     public bool MarketingConsent { get; set; }
 }

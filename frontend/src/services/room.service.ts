@@ -4,21 +4,22 @@ import type { Room, RoomType, RoomStatus } from "@/types"
 export interface CreateRoomPayload {
   roomNumber: string
   roomTypeId: string
-  floor?: string
-  notes?: string
+  floor: number
+  capacity: number
+  pricePerNight: number
+  description?: string
+  status?: RoomStatus
 }
 
 export interface CreateRoomTypePayload {
   name: string
   description?: string
   basePrice: number
-  capacityAdults: number
-  capacityChildren: number
-  amenities?: string[]
+  maxCapacity: number
 }
 
 export const roomService = {
-  async getRooms(params?: { status?: RoomStatus; floor?: string; roomTypeId?: string }) {
+  async getRooms(params?: { status?: RoomStatus; floor?: number; roomTypeId?: string }) {
     return get<Room[]>("/api/rooms", { params })
   },
 

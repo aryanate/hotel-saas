@@ -1,17 +1,17 @@
 import { get } from "./api"
-import type { DashboardStats, GSTReport, OccupancyReport } from "@/types"
+import type { DashboardStats, GSTReport, OccupancyReport, RevenueReport } from "@/types"
 
 export const reportService = {
   async getDashboard() {
     return get<DashboardStats>("/api/reports/dashboard")
   },
 
-  async getRevenue(params?: { startDate?: string; endDate?: string }) {
-    return get<{ labels: string[]; data: number[]; totalRevenue: number }>("/api/reports/revenue", { params })
+  async getRevenue(params?: { fromDate?: string; toDate?: string }) {
+    return get<RevenueReport>("/api/reports/revenue", { params })
   },
 
-  async getOccupancy(params?: { startDate?: string; endDate?: string }) {
-    return get<OccupancyReport[]>("/api/reports/occupancy", { params })
+  async getOccupancy(params?: { fromDate?: string; toDate?: string }) {
+    return get<OccupancyReport>("/api/reports/occupancy", { params })
   },
 
   async getGstReport(params: { month: number; year: number }) {

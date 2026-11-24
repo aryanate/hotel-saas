@@ -55,14 +55,11 @@ export function CreateCampaignPage() {
   const createMutation = useMutation({
     mutationFn: () =>
       campaignService.createCampaign({
-        title,
-        subject,
-        channel,
-        messageContent,
-        scheduledFor: scheduledFor || undefined,
-        recipientFilters: {
-          onlyFavorites,
-        },
+        name: title,
+        occasion: subject,
+        messageTemplate: messageContent,
+        scheduledAt: scheduledFor ? new Date(scheduledFor).toISOString() : undefined,
+        onlyConsentGuests: !onlyFavorites ? true : true,
       }),
     onSuccess: (res) => {
       toast({ title: "Campaign created successfully" })
@@ -72,8 +69,9 @@ export function CreateCampaignPage() {
         navigate("/campaigns")
       }
     },
-    onError: () => {
-      toast({ title: "Failed to create campaign", variant: "destructive" })
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to create campaign", variant: "destructive" })
     },
   })
 

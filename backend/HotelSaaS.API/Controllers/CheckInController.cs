@@ -30,9 +30,10 @@ public class CheckInController : ControllerBase
     [HttpPost("sessions/{sessionId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<bool>>> ApproveCheckIn(
         [FromRoute] Guid sessionId,
+        [FromBody] ApproveCheckInRequest? request,
         CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new ApproveCheckInCommand(sessionId), cancellationToken);
+        var result = await _mediator.Send(new ApproveCheckInCommand(sessionId, request?.RoomId), cancellationToken);
         return Ok(ApiResponse<bool>.Ok(result, "Check-in approved successfully."));
     }
 
@@ -47,6 +48,11 @@ public class CheckInController : ControllerBase
         var result = await _mediator.Send(command, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(result, "Check-in rejected."));
     }
+}
+
+public class ApproveCheckInRequest
+{
+    public Guid? RoomId { get; set; }
 }
 
 public class RejectCheckInRequest

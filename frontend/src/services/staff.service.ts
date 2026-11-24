@@ -1,12 +1,13 @@
 import { get, post, put, del } from "./api"
-import type { User, Role } from "@/types"
+import type { User } from "@/types"
 
 export interface InviteStaffPayload {
   email: string
   firstName: string
   lastName: string
   mobile?: string
-  roleId: string
+  initialPassword: string
+  roles: string[]
 }
 
 export const staffService = {
@@ -26,11 +27,11 @@ export const staffService = {
     return del(`/api/staff/${id}`)
   },
 
-  async assignRoles(userId: string, roleIds: string[]) {
-    return put(`/api/staff/${userId}/roles`, { roleIds })
+  async assignRoles(userId: string, roles: string[]) {
+    return put(`/api/staff/${userId}/roles`, { roles })
   },
 
   async getRoles() {
-    return get<Role[]>("/api/staff/roles")
+    return get<Array<{ id: string; name: string; description: string }>>("/api/staff/roles")
   },
 }

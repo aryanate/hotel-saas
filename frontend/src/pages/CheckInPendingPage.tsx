@@ -2,8 +2,10 @@ import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Check, X, FileText, QrCode } from "lucide-react"
 import { get, post } from "@/services/api"
+import { roomService } from "@/services/room.service"
 import type { CheckInSession } from "@/types"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -36,106 +38,82 @@ export function CheckInPendingPage() {
   const queryClient = useQueryClient()
   const [selectedSession, setSelectedSession] = useState<CheckInSession | null>(null)
   const [docModalOpen, setDocModalOpen] = useState(false)
+  const [selectedRoomId, setSelectedRoomId] = useState<string>("")
 
   const { data: res, isLoading } = useQuery({
     queryKey: ["pending-checkins"],
     queryFn: () => get<CheckInSession[]>("/api/checkin/pending"),
   })
 
-  const sessions: CheckInSession[] = res?.data || [
-    {
-      id: "cs1",
-      hotelId: "h1",
-      createdAt: "2026-11-13T10:00:00Z",
-      updatedAt: "2026-11-13T10:00:00Z",
-      bookingId: "b1",
-      token: "tok_991823",
-      status: "Submitted",
-      expiresAt: "2026-11-14T10:00:00Z",
-      booking: {
-        id: "b1",
-        hotelId: "h1",
-        createdAt: "2026-11-13",
-        updatedAt: "2026-11-13",
-        guestId: "g1",
-        bookingReference: "BK-9021",
-        source: "QR",
-        status: "Pending",
-        numberOfAdults: 2,
-        numberOfChildren: 0,
-        checkInDate: "2026-11-14",
-        checkOutDate: "2026-11-17",
-        totalNights: 3,
-        guest: {
-          id: "g1",
-          hotelId: "h1",
-          createdAt: "2026-11-13",
-          updatedAt: "2026-11-13",
-          fullName: "Vikram Malhotra",
-          mobile: "9876543210",
-          totalVisits: 1,
-          totalSpending: 0,
-          isFavorite: false,
-          marketingConsent: true,
-        },
-      },
-    },
-    {
-      id: "cs2",
-      hotelId: "h1",
-      createdAt: "2026-11-13T11:00:00Z",
-      updatedAt: "2026-11-13T11:00:00Z",
-      bookingId: "b2",
-      token: "tok_991824",
-      status: "Submitted",
-      expiresAt: "2026-11-14T11:00:00Z",
-      booking: {
-        id: "b2",
-        hotelId: "h1",
-        createdAt: "2026-11-13",
-        updatedAt: "2026-11-13",
-        guestId: "g2",
-        bookingReference: "BK-9022",
-        source: "QR",
-        status: "Pending",
-        numberOfAdults: 1,
-        numberOfChildren: 0,
-        checkInDate: "2026-11-14",
-        checkOutDate: "2026-11-15",
-        totalNights: 1,
-        guest: {
-          id: "g2",
-          hotelId: "h1",
-          createdAt: "2026-11-13",
-          updatedAt: "2026-11-13",
-          fullName: "Sunita Roy",
-          mobile: "9123456780",
-          totalVisits: 2,
-          totalSpending: 12000,
-          isFavorite: true,
-          marketingConsent: true,
-        },
-      },
-    },
-  ]
+  const { data: roomsRes } = useQuery({
+    queryKey: ["rooms", "Available"],
+    queryFn: () => roomService.getRooms({ status: "Available" }),
+  })
+
+  const sessions: CheckInSession[] = Array.isArray(res?.data) ? res.data : []
+  const availableRooms = roomsRes?.data || []
 
   const approveMutation = useMutation({
-    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/approve`),
+    mutationFn: ({ id, roomId }: { id: string; roomId?: string }) =>
+      post(`/api/checkin/sessions/${id}/approve`, roomId ? { roomId } : {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pending-checkins"] })
-      toast({ title: "Digital registration approved and guest verified" })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
+      queryClient.invalidateQueries({ queryKey: ["bookings"] })
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+      toast({ title: "Digital registration approved and guest checked in" })
       setDocModalOpen(false)
+      setSelectedRoomId("")
+    },
+    onError: () => {
+      toast({ title: "Failed to approve check-in", variant: "destructive" })
     },
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/reject`),
+    mutationFn: (id: string) => post(`/api/checkin/sessions/${id}/reject`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pending-checkins"] })
       toast({ title: "Submission rejected" })
       setDocModalOpen(false)
     },
+    onError: () => {
+      toast({ title: "Failed to reject submission", variant: "destructive" })
+    },
   })
+
+  const openReviewModal = (session: CheckInSession) => {
+    setSelectedSession(session)
+    const needsRoom = !session.roomNumbers || session.roomNumbers.length === 0
+    if (needsRoom && availableRooms.length > 0) {
+      setSelectedRoomId(availableRooms[0].id)
+    } else {
+      setSelectedRoomId("")
+    }
+    setDocModalOpen(true)
+  }
+
+  const handleCardApprove = (session: CheckInSession) => {
+    const hasAssignedRoom = session.roomNumbers && session.roomNumbers.length > 0
+    if (hasAssignedRoom) {
+      approveMutation.mutate({ id: session.id })
+    } else {
+      openReviewModal(session)
+    }
+  }
+
+  const handleModalApprove = () => {
+    if (!selectedSession) return
+    const hasAssignedRoom = selectedSession.roomNumbers && selectedSession.roomNumbers.length > 0
+    if (!hasAssignedRoom && availableRooms.length > 0 && !selectedRoomId) {
+      toast({ title: "Please select a room to assign before approving", variant: "destructive" })
+      return
+    }
+    approveMutation.mutate({
+      id: selectedSession.id,
+      roomId: selectedRoomId || undefined,
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -180,11 +158,11 @@ export function CheckInPendingPage() {
                     </p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Arrival:</span>
+                    <span className="text-muted-foreground">Room:</span>
                     <p className="font-semibold">
-                      {session.checkInDate
-                        ? new Date(session.checkInDate).toLocaleDateString()
-                        : (session.booking?.checkInDate || "Today")}
+                      {session.roomNumbers && session.roomNumbers.length > 0
+                        ? `Room ${session.roomNumbers.join(", ")}`
+                        : "Needs Assignment"}
                     </p>
                   </div>
                 </div>
@@ -194,12 +172,9 @@ export function CheckInPendingPage() {
                     variant="outline"
                     size="sm"
                     className="w-full text-xs"
-                    onClick={() => {
-                      setSelectedSession(session)
-                      setDocModalOpen(true)
-                    }}
+                    onClick={() => openReviewModal(session)}
                   >
-                    <FileText className="h-3.5 w-3.5 mr-1 text-primary" /> View Uploaded ID & KYC
+                    <FileText className="h-3.5 w-3.5 mr-1 text-primary" /> View Uploaded ID &amp; Assign Room
                   </Button>
                 </div>
               </div>
@@ -216,10 +191,13 @@ export function CheckInPendingPage() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => approveMutation.mutate(session.id)}
+                  onClick={() => handleCardApprove(session)}
                   disabled={approveMutation.isPending}
                 >
-                  <Check className="h-4 w-4 mr-1" /> Approve & Check In
+                  <Check className="h-4 w-4 mr-1" />{" "}
+                  {session.roomNumbers && session.roomNumbers.length > 0
+                    ? "Approve & Check In"
+                    : "Assign Room & Approve"}
                 </Button>
               </div>
             </div>
@@ -243,53 +221,117 @@ export function CheckInPendingPage() {
             </div>
 
             <div className="border rounded-lg p-4 bg-slate-50 flex flex-col items-center justify-center min-h-[180px] text-center">
-              {selectedSession?.documentUrl ? (
-                <div className="w-full space-y-2">
-                  <p className="font-semibold text-sm text-left">
-                    {getDocLabel(selectedSession?.documentType)} — ID: {selectedSession.documentNumber ?? "N/A"}
-                  </p>
-                  <img
-                    src={`http://localhost:5208${selectedSession.documentUrl}`}
-                    alt="Uploaded ID Document"
-                    className="w-full max-h-64 object-contain rounded-md border bg-white"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none"
-                      const fallback = document.getElementById("doc-fallback")
-                      if (fallback) fallback.style.display = "flex"
-                    }}
-                  />
-                  <div id="doc-fallback" className="hidden flex-col items-center text-muted-foreground py-4">
-                    <FileText className="h-10 w-10 text-primary/50 mb-1" />
-                    <span className="text-xs">Document uploaded (non-image file)</span>
-                    <a
-                      href={`http://localhost:5208${selectedSession.documentUrl}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary underline mt-1"
-                    >
-                      Open file
-                    </a>
+              {(() => {
+                const urls =
+                  selectedSession?.documentUrls && selectedSession.documentUrls.length > 0
+                    ? selectedSession.documentUrls
+                    : selectedSession?.documentUrl
+                      ? [selectedSession.documentUrl]
+                      : []
+
+                if (urls.length === 0) {
+                  return (
+                    <>
+                      <FileText className="h-14 w-14 text-primary/70 mb-2" />
+                      <p className="font-semibold text-sm">
+                        {getDocLabel(selectedSession?.documentType)} Verification
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {selectedSession?.documentNumber
+                          ? `ID Number: ${selectedSession.documentNumber}`
+                          : "Digital KYC Declaration Submitted"}
+                      </p>
+                      {selectedSession?.documentNumber && (
+                        <span className="mt-3 text-xs font-mono bg-white px-3 py-1 rounded-md border font-medium">
+                          {selectedSession.documentNumber}
+                        </span>
+                      )}
+                    </>
+                  )
+                }
+
+                return (
+                  <div className="w-full space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-sm text-left">
+                        {getDocLabel(selectedSession?.documentType)} — ID: {selectedSession?.documentNumber ?? "N/A"}
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        {urls.length} {urls.length === 1 ? "file" : "files"} attached
+                      </span>
+                    </div>
+                    <div className={urls.length > 1 ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "space-y-2"}>
+                      {urls.map((url, idx) => {
+                        const isPdf = url.toLowerCase().endsWith(".pdf")
+                        return isPdf ? (
+                          <div
+                            key={url}
+                            className="flex flex-col items-center justify-center p-4 rounded-md border bg-white text-muted-foreground min-h-[140px]"
+                          >
+                            <FileText className="h-10 w-10 text-primary/60 mb-1.5" />
+                            <span className="text-xs font-medium text-foreground">
+                              PDF Document #{idx + 1}
+                            </span>
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary underline mt-1 font-medium"
+                            >
+                              Open / View PDF
+                            </a>
+                          </div>
+                        ) : (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded-md border bg-white overflow-hidden hover:ring-2 hover:ring-primary/40 transition"
+                            title="Click to open full size"
+                          >
+                            <img
+                              src={url}
+                              alt={`Uploaded ID Document ${idx + 1}`}
+                              className="w-full max-h-56 object-contain bg-white"
+                            />
+                          </a>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <>
-                  <FileText className="h-14 w-14 text-primary/70 mb-2" />
-                  <p className="font-semibold text-sm">
-                    {getDocLabel(selectedSession?.documentType)} Verification
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {selectedSession?.documentNumber
-                      ? `ID Number: ${selectedSession.documentNumber}`
-                      : "Digital KYC Declaration Submitted"}
-                  </p>
-                  {selectedSession?.documentNumber && (
-                    <span className="mt-3 text-xs font-mono bg-white px-3 py-1 rounded-md border font-medium">
-                      {selectedSession.documentNumber}
-                    </span>
-                  )}
-                </>
-              )}
+                )
+              })()}
             </div>
+
+            {selectedSession?.roomNumbers && selectedSession.roomNumbers.length > 0 ? (
+              <div className="p-2.5 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+                Pre-assigned Room: <strong>Room {selectedSession.roomNumbers.join(", ")}</strong>
+              </div>
+            ) : availableRooms.length > 0 ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="assignRoom" className="text-xs font-semibold">
+                  Assign Room *
+                </Label>
+                <select
+                  id="assignRoom"
+                  value={selectedRoomId}
+                  onChange={(e) => setSelectedRoomId(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs"
+                >
+                  <option value="">-- Select Available Room --</option>
+                  {availableRooms.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      Room {r.roomNumber} — {r.roomTypeName || "Standard"} (₹{r.pricePerNight}/night)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                No rooms currently marked Available — guest will be checked in without room assignment.
+              </div>
+            )}
 
             <div className="text-xs text-muted-foreground">
               &bull; Document and digital consent verified for check-in compliance under local hotel regulations.
@@ -300,10 +342,14 @@ export function CheckInPendingPage() {
               Close
             </Button>
             <Button
-              onClick={() => selectedSession && approveMutation.mutate(selectedSession.id)}
+              onClick={handleModalApprove}
               disabled={approveMutation.isPending}
             >
-              Approve Identification
+              {approveMutation.isPending
+                ? "Approving..."
+                : selectedSession?.roomNumbers && selectedSession.roomNumbers.length > 0
+                  ? "Approve & Check In"
+                  : "Approve & Assign Room"}
             </Button>
           </DialogFooter>
         </DialogContent>

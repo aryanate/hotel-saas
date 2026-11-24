@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Star, FileText, Send, Plus, CheckCircle, Shield } from "lucide-react"
+import { Star, Plus, CheckCircle, Shield, ExternalLink } from "lucide-react"
 import { guestService } from "@/services/guest.service"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast"
 
 export function GuestDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [newNote, setNewNote] = useState("")
@@ -20,65 +21,24 @@ export function GuestDetailPage() {
   const { data: res, isLoading } = useQuery({
     queryKey: ["guest", id],
     queryFn: () => guestService.getGuestById(id!),
+    enabled: !!id,
   })
 
   const { data: historyRes } = useQuery({
     queryKey: ["guest-history", id],
     queryFn: () => guestService.getGuestHistory(id!),
+    enabled: !!id,
   })
 
-  const guest = res?.data || {
-    id: id || "g1",
-    fullName: "Vikram Malhotra",
-    mobile: "9876543210",
-    email: "vikram@example.com",
-    address: "B-402, Highgrove Apartments, Pune, MH",
-    totalVisits: 4,
-    totalSpending: 42000,
-    isFavorite: true,
-    marketingConsent: true,
-    preferences: "Requires high floor, extra mineral water, no feather pillows.",
-    notes: [
-      {
-        id: "n1",
-        noteText: "Guest celebrated anniversary during last stay. Prefers corner rooms.",
-        createdAt: "2026-10-15T14:20:00Z",
-      },
-    ],
-    documents: [
-      {
-        id: "d1",
-        documentType: "MaskedAadhaar",
-        documentNumberMasked: "XXXX-XXXX-8921",
-        fileUrl: "/docs/aadhaar_masked.pdf",
-        verifiedAt: "2026-10-15T14:00:00Z",
-      },
-    ],
-  }
-
-  const history = historyRes?.data || [
-    {
-      id: "b1",
-      bookingReference: "BK-8021",
-      checkInDate: "2026-10-15",
-      checkOutDate: "2026-10-18",
-      status: "CheckedOut",
-      totalNights: 3,
-    },
-    {
-      id: "b2",
-      bookingReference: "BK-7120",
-      checkInDate: "2026-08-01",
-      checkOutDate: "2026-08-03",
-      status: "CheckedOut",
-      totalNights: 2,
-    },
-  ]
+  const guest = res?.data
+  const history = historyRes?.data || []
 
   const toggleFavoriteMutation = useMutation({
     mutationFn: () => guestService.toggleFavorite(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["guest", id] })
+      queryClient.invalidateQueries({ queryKey: ["guests"] })
+      queryClient.invalidateQueries({ queryKey: ["favorite-guests"] })
       toast({ title: "VIP / Favorite status updated" })
     },
   })
@@ -101,6 +61,19 @@ export function GuestDetailPage() {
   if (isLoading) {
     return <LoadingSpinner size="lg" className="h-64" />
   }
+
+  if (!guest) {
+    return (
+      <div className="text-center py-16 space-y-4">
+        <p className="text-lg font-semibold">Guest profile not found</p>
+        <Button variant="outline" onClick={() => navigate("/guests")}>
+          Back to Guest Directory
+        </Button>
+      </div>
+    )
+  }
+
+  const formatDate = (d?: string) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-")
 
   return (
     <div className="space-y-6">
@@ -168,19 +141,27 @@ export function GuestDetailPage() {
               <CardTitle className="text-base font-semibold">Stay History</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="divide-y">
-                {history.map((b) => (
-                  <div key={b.id} className="py-3 flex items-center justify-between text-sm">
-                    <div>
-                      <p className="font-semibold text-primary">Booking #{b.bookingReference}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {b.checkInDate} to {b.checkOutDate} ({b.totalNights} nights)
-                      </p>
+              {history.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-3">No stays recorded yet.</p>
+              ) : (
+                <div className="divide-y">
+                  {history.map((b) => (
+                    <div
+                      key={b.id}
+                      onClick={() => navigate(`/bookings/${b.id}`)}
+                      className="py-3 flex items-center justify-between text-sm cursor-pointer hover:bg-muted/40 px-2 rounded"
+                    >
+                      <div>
+                        <p className="font-semibold text-primary">Booking #{b.bookingReference}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(b.checkInDate)} to {formatDate(b.checkOutDate)} ({Math.max(1, b.totalNights)} nights)
+                        </p>
+                      </div>
+                      <StatusBadge status={b.status} />
                     </div>
-                    <StatusBadge status={b.status} />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -197,14 +178,28 @@ export function GuestDetailPage() {
             <CardContent className="space-y-3">
               {guest.documents && guest.documents.length > 0 ? (
                 guest.documents.map((doc) => (
-                  <div key={doc.id} className="p-3 border rounded-lg space-y-1 text-sm bg-slate-50">
+                  <div key={doc.id} className="p-3 border rounded-lg space-y-2 text-sm bg-slate-50">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold">{doc.documentType}</span>
+                      <span className="font-semibold">
+                        {doc.documentType === "MaskedAadhaar" ? "Aadhaar Card" : doc.documentType}
+                      </span>
                       <span className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
-                        <CheckCircle className="h-3 w-3" /> Verified
+                        <CheckCircle className="h-3 w-3" /> {doc.isVerified ? "Verified" : "Pending"}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground font-mono">{doc.documentNumberMasked}</p>
+                    <p className="text-xs text-muted-foreground font-mono">
+                      {doc.documentNumber || "Number on file"}
+                    </p>
+                    {doc.storageUrl && (
+                      <a
+                        href={doc.storageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline"
+                      >
+                        <ExternalLink className="h-3 w-3" /> View Uploaded Document
+                      </a>
+                    )}
                   </div>
                 ))
               ) : (
@@ -233,7 +228,7 @@ export function GuestDetailPage() {
               <div className="space-y-2 pt-2 border-t">
                 {guest.notes?.map((n) => (
                   <div key={n.id} className="p-2.5 rounded bg-muted/60 text-xs space-y-1">
-                    <p className="text-foreground">{n.noteText}</p>
+                    <p className="text-foreground">{n.note || n.noteText}</p>
                     <p className="text-muted-foreground text-[10px]">
                       {new Date(n.createdAt).toLocaleString()}
                     </p>

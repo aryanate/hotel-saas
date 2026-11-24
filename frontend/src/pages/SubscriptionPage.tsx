@@ -1,6 +1,9 @@
+import { useQuery } from "@tanstack/react-query"
 import { Check, CreditCard, Sparkles } from "lucide-react"
+import { roomService } from "@/services/room.service"
+import { staffService } from "@/services/staff.service"
 import { Button } from "@/components/ui/button"
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card"
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { useToast } from "@/components/ui/use-toast"
@@ -8,15 +11,28 @@ import { useToast } from "@/components/ui/use-toast"
 export function SubscriptionPage() {
   const { toast } = useToast()
 
+  const { data: roomsRes } = useQuery({
+    queryKey: ["rooms"],
+    queryFn: () => roomService.getRooms(),
+  })
+
+  const { data: staffRes } = useQuery({
+    queryKey: ["staff-members"],
+    queryFn: () => staffService.getStaff(),
+  })
+
+  const roomsUsed = roomsRes?.data?.length ?? 0
+  const staffUsed = staffRes?.data?.length ?? 1
+
   const currentPlan = {
     name: "Growth Professional",
     status: "Active",
     renewsOn: "15 Dec 2026",
     priceMonthly: 2499,
     roomLimit: 50,
-    roomsUsed: 28,
+    roomsUsed,
     staffLimit: 10,
-    staffUsed: 3,
+    staffUsed,
   }
 
   const plans = [

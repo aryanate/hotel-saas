@@ -24,50 +24,7 @@ export function GuestManagementPage() {
       }),
   })
 
-  const guests: Guest[] = (res?.data?.items || [
-    {
-      id: "g1",
-      hotelId: "h1",
-      createdAt: "2026-11-13",
-      updatedAt: "2026-11-13",
-      fullName: "Vikram Malhotra",
-      mobile: "9876543210",
-      email: "vikram@example.com",
-      totalVisits: 4,
-      totalSpending: 42000,
-      lastVisitAt: "2026-11-13",
-      isFavorite: true,
-      marketingConsent: true,
-    },
-    {
-      id: "g2",
-      hotelId: "h1",
-      createdAt: "2026-10-20",
-      updatedAt: "2026-10-20",
-      fullName: "Ananya Roy",
-      mobile: "9123456789",
-      email: "ananya@example.com",
-      totalVisits: 1,
-      totalSpending: 8500,
-      lastVisitAt: "2026-10-20",
-      isFavorite: false,
-      marketingConsent: true,
-    },
-    {
-      id: "g3",
-      hotelId: "h1",
-      createdAt: "2026-11-02",
-      updatedAt: "2026-11-02",
-      fullName: "Deepak Sharma",
-      mobile: "9988112233",
-      email: "deepak@example.com",
-      totalVisits: 7,
-      totalSpending: 96000,
-      lastVisitAt: "2026-11-02",
-      isFavorite: true,
-      marketingConsent: false,
-    },
-  ]) as Guest[]
+  const guests: Guest[] = res?.data?.items || []
 
   const totalPages = res?.data?.totalPages || 1
 

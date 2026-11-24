@@ -1,18 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { hotelService } from "@/services/hotel.service"
+import { useAuth } from "@/hooks/useAuth"
 import type { Hotel } from "@/types"
 
 export const HOTEL_QUERY_KEY = ["current-hotel"]
 
 export function useCurrentHotel() {
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const query = useQuery({
-    queryKey: HOTEL_QUERY_KEY,
+    queryKey: [...HOTEL_QUERY_KEY, user?.hotelId],
     queryFn: async () => {
       const response = await hotelService.getMyHotel()
       return response.data || null
     },
+    enabled: !!user?.hotelId,
     staleTime: 1000 * 60 * 5, // 5 minutes
   })
 

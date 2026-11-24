@@ -5,15 +5,22 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import {
-  Upload,
+  Camera,
   CheckCircle2,
   ShieldCheck,
   Hotel as HotelIcon,
   AlertCircle,
   Calendar,
   BookmarkCheck,
+  Sparkles,
+  ScanLine,
+  FileText,
+  Plus,
+  X,
+  Lock,
 } from "lucide-react"
 import { get, apiClient } from "@/services/api"
+import { extractDetailsFromFiles, PdfPasswordRequiredError } from "@/lib/idOcrExtractor"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -33,12 +40,15 @@ interface PublicCheckInInfoDto {
 }
 
 const checkInSchema = z.object({
-  fullName: z.string().min(2, "Full name is required"),
-  mobile: z.string().min(10, "Valid 10-digit mobile number is required"),
-  email: z.string().email("Valid email required").optional().or(z.literal("")),
-  address: z.string().min(5, "Residential address is required"),
+  fullName: z.string().trim().min(2, "Full name is required"),
+  mobile: z
+    .string()
+    .trim()
+    .regex(/^[0-9+\-\s]{10,15}$/, "Valid 10-digit mobile number is required"),
+  email: z.string().trim().email("Valid email required").optional().or(z.literal("")),
+  address: z.string().trim().optional().or(z.literal("")),
   idType: z.string().min(1, "Please select ID Type"),
-  idNumber: z.string().min(4, "ID Number is required"),
+  idNumber: z.string().trim().min(4, "ID Number is required"),
   declaration: z.boolean().refine((val) => val === true, {
     message: "You must accept the terms and declaration",
   }),
@@ -49,7 +59,16 @@ type CheckInFormValues = z.infer<typeof checkInSchema>
 
 export function PublicCheckInPage() {
   const { token } = useParams<{ token: string }>()
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [previewUrls, setPreviewUrls] = useState<string[]>([])
+  const [isScanning, setIsScanning] = useState(false)
+  const [scanLabel, setScanLabel] = useState("Reading details from ID...")
+  const [scanProgress, setScanProgress] = useState(0)
+  const [extractedSummary, setExtractedSummary] = useState<string[]>([])
+  const [scanNotice, setScanNotice] = useState<string | null>(null)
+  const [lockedPdfName, setLockedPdfName] = useState<string | null>(null)
+  const [pdfPasswordInput, setPdfPasswordInput] = useState("")
+  const [pdfPasswords, setPdfPasswords] = useState<Record<string, string>>({})
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -67,6 +86,8 @@ export function PublicCheckInPage() {
     register,
     handleSubmit,
     setValue,
+    watch,
+    getValues,
     formState: { errors },
   } = useForm<CheckInFormValues>({
     resolver: zodResolver(checkInSchema),
@@ -81,6 +102,97 @@ export function PublicCheckInPage() {
       marketingConsent: true,
     },
   })
+
+  const currentIdType = watch("idType")
+
+  useEffect(() => {
+    const urls = selectedFiles.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : ""))
+    setPreviewUrls(urls)
+    return () => {
+      urls.forEach((u) => {
+        if (u) URL.revokeObjectURL(u)
+      })
+    }
+  }, [selectedFiles])
+
+  const runExtraction = async (filesToScan: File[], passwordsMap: Record<string, string>, overwriteExisting: boolean) => {
+    if (filesToScan.length === 0) return
+
+    setIsScanning(true)
+    setScanLabel("Reading details from ID...")
+    setScanProgress(5)
+    setScanNotice(null)
+    setLockedPdfName(null)
+
+    try {
+      const extracted = await extractDetailsFromFiles(filesToScan, passwordsMap, (lbl, pct) => {
+        setScanLabel(lbl)
+        setScanProgress(pct)
+      })
+
+      const filled: string[] = []
+      if (extracted.idType && (overwriteExisting || !getValues("idNumber"))) {
+        setValue("idType", extracted.idType, { shouldValidate: true })
+        filled.push("ID Type")
+      }
+      if (extracted.idNumber && (overwriteExisting || !getValues("idNumber"))) {
+        setValue("idNumber", extracted.idNumber, { shouldValidate: true })
+        filled.push("ID Number")
+      }
+      if (extracted.fullName && (overwriteExisting || !getValues("fullName"))) {
+        setValue("fullName", extracted.fullName, { shouldValidate: true })
+        filled.push("Full Name")
+      }
+      if (extracted.mobile && (overwriteExisting || !getValues("mobile"))) {
+        setValue("mobile", extracted.mobile, { shouldValidate: true })
+        filled.push("Mobile")
+      }
+      if (extracted.address && (overwriteExisting || !getValues("address"))) {
+        setValue("address", extracted.address, { shouldValidate: true })
+        filled.push("Address")
+      }
+
+      setExtractedSummary((prev) => (overwriteExisting ? filled : Array.from(new Set([...prev, ...filled]))))
+
+      if (filled.length === 0 && extracted.extractedFields.length === 0) {
+        setScanNotice("Document attached! Could not read text clearly — please fill or verify details below.")
+      }
+    } catch (err: unknown) {
+      if (err instanceof PdfPasswordRequiredError) {
+        setLockedPdfName(err.fileName)
+        setScanNotice(
+          err.incorrectPassword
+            ? `Incorrect password for ${err.fileName}. Try again (for e-Aadhaar: first 4 letters of Name in CAPS + Birth Year, e.g. RAHU1995).`
+            : `${err.fileName} is password protected. Enter password below to extract details automatically.`
+        )
+      } else {
+        setScanNotice("Document attached! Please fill or verify details below.")
+      }
+    } finally {
+      setIsScanning(false)
+      setScanProgress(0)
+    }
+  }
+
+  const handleFilesAdded = async (fileList: FileList | null, replaceAll: boolean) => {
+    if (!fileList || fileList.length === 0) return
+    const incoming = Array.from(fileList)
+    const nextFiles = replaceAll ? incoming : [...selectedFiles, ...incoming]
+    setSelectedFiles(nextFiles)
+    await runExtraction(replaceAll ? nextFiles : incoming, pdfPasswords, replaceAll)
+  }
+
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, idx) => idx !== index))
+  }
+
+  const handleUnlockPdf = async () => {
+    if (!lockedPdfName || !pdfPasswordInput) return
+    const nextPasswords = { ...pdfPasswords, [lockedPdfName]: pdfPasswordInput }
+    setPdfPasswords(nextPasswords)
+    setPdfPasswordInput("")
+    await runExtraction(selectedFiles, nextPasswords, false)
+  }
 
   useEffect(() => {
     if (checkInData) {
@@ -105,7 +217,9 @@ export function PublicCheckInPage() {
       formData.append("documentType", values.idType)
       formData.append("documentNumber", values.idNumber)
       formData.append("marketingConsent", String(!!values.marketingConsent))
-      if (selectedFile) formData.append("documentFile", selectedFile)
+      selectedFiles.forEach((file) => {
+        formData.append("documentFiles", file)
+      })
 
       await apiClient.post(`/api/public/checkin/${token}/upload`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -130,17 +244,15 @@ export function PublicCheckInPage() {
   }
 
   if (error || (checkInData && checkInData.isExpired)) {
-    const axiosErr = error as { response?: { status?: number; data?: { message?: string } }; message?: string; code?: string }
-    const httpStatus = axiosErr?.response?.status
+    const axiosErr = error as { response?: { data?: { message?: string } }; message?: string }
     const apiMsg = axiosErr?.response?.data?.message
     const networkMsg = axiosErr?.message
-    const errCode = axiosErr?.code
 
     const displayMsg = checkInData?.isExpired
       ? "This digital registration link has expired. Please request a new link or complete check-in at the hotel front desk."
       : apiMsg
         ? apiMsg
-        : networkMsg
+        : networkMsg && !networkMsg.includes("Network Error")
           ? networkMsg
           : "We could not find an active check-in session for this link."
 
@@ -154,13 +266,6 @@ export function PublicCheckInPage() {
             {checkInData?.isExpired ? "Check-In Link Expired" : "Invalid Check-In Link"}
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">{displayMsg}</p>
-          {/* Debug info - remove after fix */}
-          <div className="mt-3 p-2 bg-slate-100 rounded text-left text-xs text-slate-500 font-mono break-all">
-            <div>Token: {token}</div>
-            {httpStatus && <div>HTTP: {httpStatus}</div>}
-            {errCode && <div>Code: {errCode}</div>}
-            {networkMsg && <div>Err: {networkMsg}</div>}
-          </div>
           <div className="mt-4 flex flex-col gap-2">
             <Button variant="default" onClick={() => window.location.reload()} className="w-full">
               Retry
@@ -228,6 +333,159 @@ export function PublicCheckInPage() {
                 </div>
               )}
 
+              {/* Step 1: Smart ID Upload & Auto-Fill (Multiple Photos or PDF) */}
+              <div className="rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-bold text-foreground">
+                      Quick Auto-Fill via Govt ID Photo / PDF
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-medium text-primary bg-white px-2 py-0.5 rounded-full border">
+                    Front + Back Pics or PDF
+                  </span>
+                </div>
+
+                <input
+                  type="file"
+                  id="idFile"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    handleFilesAdded(e.target.files, true)
+                    e.target.value = ""
+                  }}
+                  accept="image/*,application/pdf"
+                />
+
+                <input
+                  type="file"
+                  id="idFileMore"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    handleFilesAdded(e.target.files, false)
+                    e.target.value = ""
+                  }}
+                  accept="image/*,application/pdf"
+                />
+
+                {isScanning ? (
+                  <div className="rounded-lg border bg-white p-4 space-y-2 text-center">
+                    <div className="flex items-center justify-center gap-2 text-primary text-sm font-semibold">
+                      <ScanLine className="h-4 w-4 animate-pulse" />
+                      <span>{scanLabel} {scanProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-primary h-full transition-all duration-200"
+                        style={{ width: `${Math.max(10, scanProgress)}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : selectedFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {selectedFiles.map((file, idx) => (
+                        <div
+                          key={`${file.name}-${idx}`}
+                          className="flex items-center gap-2.5 rounded-lg border bg-white p-2.5 relative"
+                        >
+                          {previewUrls[idx] ? (
+                            <img
+                              src={previewUrls[idx]}
+                              alt={`ID ${idx + 1}`}
+                              className="h-12 w-16 object-cover rounded border shrink-0"
+                            />
+                          ) : (
+                            <div className="h-12 w-12 rounded border bg-slate-100 flex items-center justify-center shrink-0">
+                              <FileText className="h-6 w-6 text-primary" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1 text-left">
+                            <p className="text-xs font-semibold text-emerald-700">
+                              {idx === 0 ? "ID Front / Doc" : `Photo / Doc #${idx + 1}`}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate">{file.name}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFile(idx)}
+                            className="p-1 text-muted-foreground hover:text-destructive rounded"
+                            title="Remove file"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <label
+                        htmlFor="idFileMore"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-white hover:border-primary text-xs font-semibold text-primary cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add Back Side / Another Pic
+                      </label>
+                      <label
+                        htmlFor="idFile"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-white hover:border-primary text-xs font-medium text-muted-foreground cursor-pointer"
+                      >
+                        Replace All
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="idFile"
+                    className="block cursor-pointer rounded-lg border bg-white p-3 hover:border-primary transition-colors"
+                  >
+                    <div className="flex flex-col items-center text-center py-2 text-muted-foreground">
+                      <Camera className="h-8 w-8 mb-1.5 text-primary" />
+                      <span className="text-sm font-semibold text-foreground">
+                        Upload Aadhaar (Front + Back Pics) or PDF
+                      </span>
+                      <span className="text-xs">
+                        Select 1 or multiple photos / PDF — auto-fills name, ID number &amp; address!
+                      </span>
+                    </div>
+                  </label>
+                )}
+
+                {lockedPdfName && !isScanning && (
+                  <div className="p-3 rounded-lg bg-white border border-amber-300 space-y-2">
+                    <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5" /> Unlock Password-Protected PDF ({lockedPdfName})
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        value={pdfPasswordInput}
+                        onChange={(e) => setPdfPasswordInput(e.target.value)}
+                        placeholder="e.g. RAHU1995 (e-Aadhaar password)"
+                        className="h-8 text-xs"
+                      />
+                      <Button type="button" size="sm" className="h-8 text-xs" onClick={handleUnlockPdf}>
+                        Unlock &amp; Extract
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {extractedSummary.length > 0 && !isScanning && (
+                  <div className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-2 rounded-lg">
+                    <strong>Auto-filled:</strong> {extractedSummary.join(", ")} (verify below)
+                  </div>
+                )}
+
+                {scanNotice && !isScanning && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                    {scanNotice}
+                  </p>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="fullName">Full Name (as per Govt ID) *</Label>
                 <Input
@@ -261,10 +519,12 @@ export function PublicCheckInPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="address">Residential Address *</Label>
+                <Label htmlFor="address">
+                  Residential Address <span className="text-xs font-normal text-muted-foreground">(Optional — auto-filled if on ID)</span>
+                </Label>
                 <Input
                   id="address"
-                  placeholder="Flat / House No., Area, City, State"
+                  placeholder="Flat / House No., Area, City, State (optional)"
                   {...register("address")}
                 />
                 {errors.address && <p className="text-xs text-destructive">{errors.address.message}</p>}
@@ -275,8 +535,8 @@ export function PublicCheckInPage() {
                   <Label htmlFor="idType">Govt ID Type *</Label>
                   <select
                     id="idType"
-                    defaultValue="MaskedAadhaar"
-                    onChange={(e) => setValue("idType", e.target.value)}
+                    value={currentIdType}
+                    onChange={(e) => setValue("idType", e.target.value, { shouldValidate: true })}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                   >
                     <option value="MaskedAadhaar">Aadhaar Card</option>
@@ -295,36 +555,6 @@ export function PublicCheckInPage() {
                     {...register("idNumber")}
                   />
                   {errors.idNumber && <p className="text-xs text-destructive">{errors.idNumber.message}</p>}
-                </div>
-              </div>
-
-              {/* Document photo upload */}
-              <div className="space-y-2 pt-2">
-                <Label>Upload Photo of Govt ID (Optional)</Label>
-                <div className="border-2 border-dashed rounded-xl p-5 text-center hover:border-primary transition-colors cursor-pointer bg-slate-50">
-                  <input
-                    type="file"
-                    id="idFile"
-                    className="hidden"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-                    accept="image/*,application/pdf"
-                  />
-                  <label htmlFor="idFile" className="cursor-pointer block">
-                    {selectedFile ? (
-                      <div className="flex flex-col items-center text-emerald-600">
-                        <CheckCircle2 className="h-8 w-8 mb-1" />
-                        <span className="text-sm font-semibold">Document Attached</span>
-                        <span className="text-xs text-muted-foreground truncate max-w-[200px]">{selectedFile.name}</span>
-                        <span className="text-xs text-muted-foreground">Tap to choose a different photo</span>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center text-muted-foreground">
-                        <Upload className="h-8 w-8 mb-1 text-primary" />
-                        <span className="text-sm font-semibold text-foreground">Click or tap to snap / upload ID</span>
-                        <span className="text-xs">Supports Camera photo, JPG, PNG up to 10MB</span>
-                      </div>
-                    )}
-                  </label>
                 </div>
               </div>
 

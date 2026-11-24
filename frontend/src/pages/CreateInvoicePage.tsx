@@ -49,6 +49,27 @@ export function CreateInvoicePage() {
 
   const bookings = bookingsRes?.data?.items || []
 
+  const handleBookingChange = (selectedId: string) => {
+    setBookingId(selectedId)
+    const selected = bookings.find((b) => b.id === selectedId)
+    if (selected) {
+      const nights = Math.max(1, selected.totalNights || 1)
+      const assignedRooms = selected.rooms || selected.bookingRooms || []
+      if (assignedRooms.length > 0) {
+        setItems(
+          assignedRooms.map((r, idx) => ({
+            id: String(Date.now() + idx),
+            description: `Room ${r.roomNumber || r.room?.roomNumber || ""} (${r.roomTypeName || "Stay"})`,
+            category: "Room",
+            quantity: nights,
+            unitPrice: r.pricePerNight ?? r.ratePerNight ?? 2500,
+            taxRate: 12,
+          }))
+        )
+      }
+    }
+  }
+
   const addItem = () => {
     setItems((prev) => [
       ...prev,
@@ -128,14 +149,16 @@ export function CreateInvoicePage() {
           <CardContent className="space-y-6">
             <div className="space-y-2">
               <Label>Associated Booking / Stay *</Label>
-              <Select value={bookingId} onValueChange={setBookingId}>
+              <Select value={bookingId} onValueChange={handleBookingChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select active booking" />
                 </SelectTrigger>
                 <SelectContent>
                   {bookings.map((b) => (
                     <SelectItem key={b.id} value={b.id}>
-                      {b.bookingReference} - {b.guest?.fullName} ({b.checkInDate} to {b.checkOutDate})
+                      {b.bookingReference} - {b.guestName || b.guest?.fullName || "Guest"} (
+                      {new Date(b.checkInDate).toLocaleDateString("en-IN")} to{" "}
+                      {new Date(b.checkOutDate).toLocaleDateString("en-IN")})
                     </SelectItem>
                   ))}
                 </SelectContent>

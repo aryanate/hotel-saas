@@ -33,8 +33,8 @@ export const guestService = {
     return post<{ isFavorite: boolean }>(`/api/guests/${id}/favorite`)
   },
 
-  async addNote(id: string, noteText: string) {
-    return post<GuestNote>(`/api/guests/${id}/notes`, { noteText })
+  async addNote(id: string, note: string) {
+    return post<GuestNote>(`/api/guests/${id}/notes`, { note })
   },
 
   async getDocuments(id: string) {

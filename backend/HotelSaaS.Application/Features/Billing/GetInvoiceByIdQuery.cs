@@ -30,6 +30,7 @@ public class GetInvoiceByIdQueryHandler : IRequestHandler<GetInvoiceByIdQuery, I
         }
 
         var i = await _context.Invoices
+            .Include(i => i.Booking)
             .Include(i => i.Items)
             .Include(i => i.Payments)
             .FirstOrDefaultAsync(i => i.Id == request.Id && i.HotelId == hotelId.Value && !i.IsDeleted, cancellationToken);
@@ -44,6 +45,7 @@ public class GetInvoiceByIdQueryHandler : IRequestHandler<GetInvoiceByIdQuery, I
             Id = i.Id,
             HotelId = i.HotelId,
             BookingId = i.BookingId,
+            BookingReference = i.Booking?.BookingReference,
             InvoiceNumber = i.InvoiceNumber,
             InvoiceDate = i.InvoiceDate,
             GuestName = i.GuestName,

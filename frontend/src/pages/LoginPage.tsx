@@ -27,6 +27,7 @@ export function LoginPage() {
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -41,13 +42,23 @@ export function LoginPage() {
     setIsLoading(true)
     try {
       await login(values)
-      navigate("/dashboard")
+      if (values.email.toLowerCase() === "admin@hotelsaas.com") {
+        navigate("/admin/dashboard")
+      } else {
+        navigate("/dashboard")
+      }
     } catch (err: unknown) {
       const errObj = err as { response?: { data?: { message?: string } } }
       setError(errObj.response?.data?.message || "Invalid email or password. Please try again.")
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleQuickDemo = (email: string) => {
+    setValue("email", email)
+    setValue("password", "Password123!")
+    onSubmit({ email, password: "Password123!" })
   }
 
   return (
@@ -115,6 +126,33 @@ export function LoginPage() {
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? "Signing in..." : "Sign In"}
               </Button>
+              <div className="w-full pt-2 border-t space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground text-center">
+                  Quick Demo Access
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    disabled={isLoading}
+                    onClick={() => handleQuickDemo("demo@grandpalace.com")}
+                  >
+                    Hotel Manager
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    disabled={isLoading}
+                    onClick={() => handleQuickDemo("admin@hotelsaas.com")}
+                  >
+                    Super Admin
+                  </Button>
+                </div>
+              </div>
               <div className="text-center text-xs text-muted-foreground">
                 Don't have a hotel registered yet?{" "}
                 <Link to="/register" className="font-semibold text-primary hover:underline">

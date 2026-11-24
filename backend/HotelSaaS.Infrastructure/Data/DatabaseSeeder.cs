@@ -1,7 +1,7 @@
+using HotelSaaS.Application.Common.Services;
 using HotelSaaS.Domain.Entities;
 using HotelSaaS.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace HotelSaaS.Infrastructure.Data;
 
@@ -9,7 +9,201 @@ public static class DatabaseSeeder
 {
     public static async Task SeedAllAsync(ApplicationDbContext context)
     {
+        var hasher = new PasswordHasher();
+
+        // 0. Ensure System Roles exist
+        var requiredRoles = new[]
+        {
+            new { Name = "SuperAdmin", Desc = "Platform Super Administrator" },
+            new { Name = "HotelAdmin", Desc = "Hotel Administrator with full access" },
+            new { Name = "Receptionist", Desc = "Front desk check-in, bookings, and invoicing" },
+            new { Name = "Housekeeping", Desc = "Room cleaning and housekeeping status updates" },
+            new { Name = "Accountant", Desc = "Invoicing, payments, and GST reporting" }
+        };
+
+        var existingRoles = await context.Roles.Where(r => r.HotelId == null).ToListAsync();
+        foreach (var rr in requiredRoles)
+        {
+            if (!existingRoles.Any(r => r.Name == rr.Name))
+            {
+                var role = new Role
+                {
+                    Id = Guid.NewGuid(),
+                    HotelId = null,
+                    Name = rr.Name,
+                    Description = rr.Desc,
+                    IsSystemRole = true
+                };
+                context.Roles.Add(role);
+                existingRoles.Add(role);
+            }
+        }
+        await context.SaveChangesAsync();
+
+        // 0b. Ensure Subscription Plans exist
+        var existingPlans = await context.SubscriptionPlans.ToListAsync();
+        if (!existingPlans.Any())
+        {
+            var plans = new[]
+            {
+                new SubscriptionPlan
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Starter",
+                    Description = "For boutique guest houses and homestays up to 20 rooms",
+                    Price = 999m,
+                    BillingCycle = "Monthly",
+                    MaxBookingsPerMonth = 250,
+                    FeaturesJson = "[\"Up to 20 rooms\",\"Front-desk QR check-in\",\"GST Invoicing\",\"Basic Reports\"]",
+                    IsActive = true
+                },
+                new SubscriptionPlan
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Growth Professional",
+                    Description = "For busy boutique hotels and resorts up to 50 rooms",
+                    Price = 2499m,
+                    BillingCycle = "Monthly",
+                    MaxBookingsPerMonth = 1500,
+                    FeaturesJson = "[\"Up to 50 rooms\",\"WhatsApp Automation & Invoices\",\"Marketing Campaigns\",\"VIP Guest Retention\",\"Priority Support\"]",
+                    IsActive = true
+                },
+                new SubscriptionPlan
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Enterprise Multi-Property",
+                    Description = "For hotel chains with unlimited rooms and multi-property reporting",
+                    Price = 5999m,
+                    BillingCycle = "Monthly",
+                    MaxBookingsPerMonth = 10000,
+                    FeaturesJson = "[\"Unlimited rooms & staff\",\"Custom domain branding\",\"Dedicated account manager\",\"API Access & SLA\"]",
+                    IsActive = true
+                }
+            };
+            context.SubscriptionPlans.AddRange(plans);
+            await context.SaveChangesAsync();
+            existingPlans = plans.ToList();
+        }
+
+        // 0c. Ensure SuperAdmin user exists
+        var superAdminEmail = "admin@hotelsaas.com";
+        if (!await context.Users.AnyAsync(u => u.Email == superAdminEmail && !u.IsDeleted))
+        {
+            var saRole = existingRoles.First(r => r.Name == "SuperAdmin");
+            var saUser = new User
+            {
+                Id = Guid.NewGuid(),
+                HotelId = null,
+                Email = superAdminEmail,
+                PasswordHash = hasher.HashPassword("Password123!"),
+                FirstName = "Platform",
+                LastName = "Admin",
+                Mobile = "9999900000",
+                IsActive = true,
+                IsSuperAdmin = true
+            };
+            context.Users.Add(saUser);
+            context.UserRoles.Add(new UserRole { UserId = saUser.Id, RoleId = saRole.Id });
+            await context.SaveChangesAsync();
+        }
+
+        // 0d. Ensure Default Hotels exist on fresh clone
         var hotels = await context.Hotels.Where(h => !h.IsDeleted).ToListAsync();
+        if (!hotels.Any())
+        {
+            var grandPalace = new Hotel
+            {
+                Id = Guid.NewGuid(),
+                Name = "Grand Palace Hotel",
+                OwnerName = "Rahul Sharma",
+                Email = "rahul@grandpalace.com",
+                Mobile = "9876543210",
+                Address = "42 Marine Drive, Colaba",
+                City = "Mumbai",
+                State = "Maharashtra",
+                PinCode = "400001",
+                GstIn = "27AABCG1234F1Z5",
+                NumberOfRooms = 25,
+                PublicToken = Guid.Parse("859FFD60-B4F1-49DF-B2EE-0FE2737CA611"),
+                IsActive = true
+            };
+
+            var royalOrchid = new Hotel
+            {
+                Id = Guid.NewGuid(),
+                Name = "Royal Orchid Resort",
+                OwnerName = "Vikram Oberoi",
+                Email = "manager@royalorchid.com",
+                Mobile = "9811122233",
+                Address = "18 MG Road",
+                City = "Bengaluru",
+                State = "Karnataka",
+                PinCode = "560001",
+                GstIn = "29AABCR5678G1Z2",
+                NumberOfRooms = 35,
+                PublicToken = Guid.NewGuid(),
+                IsActive = true
+            };
+
+            context.Hotels.AddRange(grandPalace, royalOrchid);
+
+            var hotelAdminRole = existingRoles.First(r => r.Name == "HotelAdmin");
+            var rahulUser = new User
+            {
+                Id = Guid.NewGuid(),
+                HotelId = grandPalace.Id,
+                Email = "rahul@grandpalace.com",
+                PasswordHash = hasher.HashPassword("Password123!"),
+                FirstName = "Rahul",
+                LastName = "Sharma",
+                Mobile = "9876543210",
+                IsActive = true,
+                IsSuperAdmin = false
+            };
+
+            var orchidUser = new User
+            {
+                Id = Guid.NewGuid(),
+                HotelId = royalOrchid.Id,
+                Email = "manager@royalorchid.com",
+                PasswordHash = hasher.HashPassword("Password123!"),
+                FirstName = "Vikram",
+                LastName = "Oberoi",
+                Mobile = "9811122233",
+                IsActive = true,
+                IsSuperAdmin = false
+            };
+
+            context.Users.AddRange(rahulUser, orchidUser);
+            context.UserRoles.Add(new UserRole { UserId = rahulUser.Id, RoleId = hotelAdminRole.Id });
+            context.UserRoles.Add(new UserRole { UserId = orchidUser.Id, RoleId = hotelAdminRole.Id });
+            await context.SaveChangesAsync();
+
+            hotels.AddRange(new[] { grandPalace, royalOrchid });
+        }
+
+        // Ensure demo login account exists for Grand Palace (for effortless team demo)
+        var gpHotel = hotels.FirstOrDefault(h => h.Name.Contains("Grand Palace")) ?? hotels.First();
+        if (!await context.Users.AnyAsync(u => u.Email == "demo@grandpalace.com" && !u.IsDeleted))
+        {
+            var hotelAdminRole = existingRoles.First(r => r.Name == "HotelAdmin");
+            var demoUser = new User
+            {
+                Id = Guid.NewGuid(),
+                HotelId = gpHotel.Id,
+                Email = "demo@grandpalace.com",
+                PasswordHash = hasher.HashPassword("Password123!"),
+                FirstName = "Demo",
+                LastName = "Manager",
+                Mobile = "9876500001",
+                IsActive = true,
+                IsSuperAdmin = false
+            };
+            context.Users.Add(demoUser);
+            context.UserRoles.Add(new UserRole { UserId = demoUser.Id, RoleId = hotelAdminRole.Id });
+            await context.SaveChangesAsync();
+        }
+
         foreach (var hotel in hotels)
         {
             await SeedHotelDataAsync(context, hotel.Id);
@@ -200,16 +394,31 @@ public static class DatabaseSeeder
                 docs.Add(new GuestDocument
                 {
                     Id = Guid.NewGuid(),
+                    HotelId = hotelId,
                     GuestId = g.Id,
                     DocumentType = DocumentType.MaskedAadhaar,
                     DocumentNumber = $"XXXX-XXXX-{new Random().Next(1000, 9999)}",
                     StorageKey = $"kyc/{hotelId}/{g.Id}/aadhaar.pdf",
+                    FileName = "aadhaar-masked.pdf",
                     IsVerified = true,
                     VerifiedAt = DateTime.UtcNow.AddDays(-1)
                 });
             }
             context.GuestDocuments.AddRange(docs);
             await context.SaveChangesAsync();
+        }
+        else
+        {
+            // Backfill any previously seeded GuestDocuments missing HotelId
+            var guestIds = existingGuests.Select(g => g.Id).ToList();
+            var orphanedDocs = await context.GuestDocuments
+                .Where(d => d.HotelId == Guid.Empty && guestIds.Contains(d.GuestId))
+                .ToListAsync();
+            if (orphanedDocs.Any())
+            {
+                foreach (var d in orphanedDocs) d.HotelId = hotelId;
+                await context.SaveChangesAsync();
+            }
         }
 
         // 4. Bookings, Invoices & Payments
@@ -258,6 +467,8 @@ public static class DatabaseSeeder
                 var r = occupiedRooms[i];
                 context.BookingRooms.Add(new BookingRoom
                 {
+                    Id = Guid.NewGuid(),
+                    HotelId = hotelId,
                     BookingId = b.Id,
                     RoomId = r.Id,
                     PricePerNight = r.PricePerNight,
@@ -475,6 +686,154 @@ public static class DatabaseSeeder
             };
             context.RetentionPolicies.AddRange(defaultPolicies);
             await context.SaveChangesAsync();
+        }
+
+        // 6. Backfill any BookingRooms missing HotelId
+        var bookingIds = await context.Bookings.Where(b => b.HotelId == hotelId).Select(b => b.Id).ToListAsync();
+        var orphanedBookingRooms = await context.BookingRooms
+            .Where(br => br.HotelId == Guid.Empty && bookingIds.Contains(br.BookingId))
+            .ToListAsync();
+        if (orphanedBookingRooms.Any())
+        {
+            foreach (var br in orphanedBookingRooms) br.HotelId = hotelId;
+            await context.SaveChangesAsync();
+        }
+
+        // 7. Seed Staff Members (if only owner exists)
+        var existingStaffCount = await context.Users.CountAsync(u => u.HotelId == hotelId && !u.IsDeleted);
+        if (existingStaffCount <= 2)
+        {
+            var hasher = new PasswordHasher();
+            var suffix = hotelId.ToString("N").Substring(0, 6);
+            var receptionRole = await context.Roles.FirstOrDefaultAsync(r => r.Name == "Receptionist");
+            var hkRole = await context.Roles.FirstOrDefaultAsync(r => r.Name == "Housekeeping");
+
+            var staffSpecs = new[]
+            {
+                new { First = "Pooja", Last = "Nair", Email = $"pooja.{suffix}@hotelsaas.dev", Mobile = "9820112233", Role = receptionRole },
+                new { First = "Mohan", Last = "Singh", Email = $"mohan.{suffix}@hotelsaas.dev", Mobile = "9820445566", Role = hkRole }
+            };
+
+            foreach (var s in staffSpecs)
+            {
+                if (!await context.Users.AnyAsync(u => u.Email == s.Email))
+                {
+                    var u = new User
+                    {
+                        Id = Guid.NewGuid(),
+                        HotelId = hotelId,
+                        Email = s.Email,
+                        PasswordHash = hasher.HashPassword("Password123!"),
+                        FirstName = s.First,
+                        LastName = s.Last,
+                        Mobile = s.Mobile,
+                        IsActive = true
+                    };
+                    context.Users.Add(u);
+                    if (s.Role != null)
+                    {
+                        context.UserRoles.Add(new UserRole { UserId = u.Id, RoleId = s.Role.Id });
+                    }
+                }
+            }
+            await context.SaveChangesAsync();
+        }
+
+        // 8. Seed Guest Notes
+        if (!await context.GuestNotes.AnyAsync(n => n.HotelId == hotelId) && existingGuests.Any())
+        {
+            var firstGuest = existingGuests.First();
+            context.GuestNotes.Add(new GuestNote
+            {
+                Id = Guid.NewGuid(),
+                HotelId = hotelId,
+                GuestId = firstGuest.Id,
+                Note = "VIP corporate traveler. Prefers high floor room away from elevator and early breakfast."
+            });
+            await context.SaveChangesAsync();
+        }
+
+        // 9. Seed Campaigns & Recipients
+        if (!await context.Campaigns.AnyAsync(c => c.HotelId == hotelId && !c.IsDeleted) && existingGuests.Any())
+        {
+            var consentGuests = existingGuests.Where(g => g.MarketingConsent).ToList();
+            if (!consentGuests.Any()) consentGuests = existingGuests.Take(4).ToList();
+
+            var sentCampaign = new Campaign
+            {
+                Id = Guid.NewGuid(),
+                HotelId = hotelId,
+                Name = "Festive Loyalty Privilege",
+                Occasion = "Exclusive 20% Off on Your Next Stay + Complimentary Breakfast",
+                MessageTemplate = "Dear {{GuestName}}, warm greetings! Enjoy 20% off + free breakfast on your next stay with code VIP20.",
+                Status = CampaignStatus.Sent,
+                SentAt = DateTime.UtcNow.AddDays(-3),
+                IsDeleted = false
+            };
+
+            foreach (var g in consentGuests)
+            {
+                sentCampaign.Recipients.Add(new CampaignRecipient
+                {
+                    Id = Guid.NewGuid(),
+                    HotelId = hotelId,
+                    CampaignId = sentCampaign.Id,
+                    GuestId = g.Id,
+                    Mobile = g.Mobile,
+                    Channel = MessageChannel.WhatsApp,
+                    Status = RecipientStatus.Sent,
+                    SentAt = DateTime.UtcNow.AddDays(-3)
+                });
+            }
+
+            var scheduledCampaign = new Campaign
+            {
+                Id = Guid.NewGuid(),
+                HotelId = hotelId,
+                Name = "Weekend Spa & Stay Getaway",
+                Occasion = "Unwind This Weekend with Late Check-out till 2 PM",
+                MessageTemplate = "Hi {{GuestName}}, book a weekend stay and receive complimentary late check-out & welcome drinks.",
+                Status = CampaignStatus.Scheduled,
+                ScheduledAt = DateTime.UtcNow.AddDays(2),
+                IsDeleted = false
+            };
+
+            foreach (var g in consentGuests.Take(3))
+            {
+                scheduledCampaign.Recipients.Add(new CampaignRecipient
+                {
+                    Id = Guid.NewGuid(),
+                    HotelId = hotelId,
+                    CampaignId = scheduledCampaign.Id,
+                    GuestId = g.Id,
+                    Mobile = g.Mobile,
+                    Channel = MessageChannel.WhatsApp,
+                    Status = RecipientStatus.Pending
+                });
+            }
+
+            context.Campaigns.AddRange(sentCampaign, scheduledCampaign);
+            await context.SaveChangesAsync();
+        }
+
+        // 10. Seed Hotel Subscription
+        if (!await context.HotelSubscriptions.AnyAsync(s => s.HotelId == hotelId))
+        {
+            var proPlan = await context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Name.Contains("Growth"))
+                          ?? await context.SubscriptionPlans.FirstOrDefaultAsync();
+            if (proPlan != null)
+            {
+                context.HotelSubscriptions.Add(new HotelSubscription
+                {
+                    Id = Guid.NewGuid(),
+                    HotelId = hotelId,
+                    PlanId = proPlan.Id,
+                    Status = SubscriptionStatus.Active,
+                    StartDate = DateTime.UtcNow.AddDays(-15),
+                    EndDate = DateTime.UtcNow.AddDays(15)
+                });
+                await context.SaveChangesAsync();
+            }
         }
     }
 }

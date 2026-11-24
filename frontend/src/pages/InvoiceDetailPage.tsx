@@ -3,11 +3,12 @@ import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Download, Send, CreditCard, Building2, MessageSquare } from "lucide-react"
 import { billingService } from "@/services/billing.service"
+import { useCurrentHotel } from "@/hooks/useCurrentHotel"
 import type { PaymentMethod } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { PageHeader } from "@/components/shared/PageHeader"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner"
@@ -26,6 +27,7 @@ export function InvoiceDetailPage() {
   const navigate = useNavigate()
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { hotel } = useCurrentHotel()
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState<number>(0)
@@ -35,50 +37,10 @@ export function InvoiceDetailPage() {
   const { data: res, isLoading } = useQuery({
     queryKey: ["invoice", id],
     queryFn: () => billingService.getInvoiceById(id!),
+    enabled: !!id,
   })
 
-  const invoice = res?.data || {
-    id: id || "inv-1",
-    invoiceNumber: "INV-2026-0012",
-    issueDate: "2026-11-13",
-    status: "PartiallyPaid",
-    subTotal: 10500,
-    taxAmount: 1260,
-    discountAmount: 500,
-    totalAmount: 11260,
-    paidAmount: 5000,
-    balanceAmount: 6260,
-    booking: {
-      bookingReference: "BK-9021",
-      guest: {
-        fullName: "Vikram Malhotra",
-        mobile: "9876543210",
-        email: "vikram@example.com",
-      },
-    },
-    items: [
-      {
-        id: "item-1",
-        description: "Room 204 - 3 Nights Stay",
-        category: "Room",
-        quantity: 3,
-        unitPrice: 3500,
-        taxRate: 12,
-        taxAmount: 1260,
-        discountAmount: 0,
-        totalAmount: 11760,
-      },
-    ],
-    payments: [
-      {
-        id: "pay-1",
-        amount: 5000,
-        paymentMethod: "UPI",
-        paymentDate: "2026-11-13T12:00:00Z",
-        transactionReference: "UPI-901829102",
-      },
-    ],
-  }
+  const invoice = res?.data
 
   const recordPaymentMutation = useMutation({
     mutationFn: () =>
@@ -89,9 +51,15 @@ export function InvoiceDetailPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["invoice", id] })
+      queryClient.invalidateQueries({ queryKey: ["invoices"] })
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
       toast({ title: "Payment recorded successfully" })
       setPaymentModalOpen(false)
       setPaymentRef("")
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      toast({ title: msg || "Failed to record payment", variant: "destructive" })
     },
   })
 
@@ -113,6 +81,25 @@ export function InvoiceDetailPage() {
     return <LoadingSpinner size="lg" className="h-64" />
   }
 
+  if (!invoice) {
+    return (
+      <div className="text-center py-16 space-y-4">
+        <p className="text-lg font-semibold">Invoice not found</p>
+        <Button variant="outline" onClick={() => navigate("/billing")}>
+          Back to Billing
+        </Button>
+      </div>
+    )
+  }
+
+  const paid = invoice.amountPaid ?? invoice.paidAmount ?? 0
+  const balance = invoice.outstandingBalance ?? Math.max(0, (invoice.totalAmount ?? 0) - paid)
+  const issueDateStr = invoice.invoiceDate
+    ? new Date(invoice.invoiceDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : invoice.issueDate || "-"
+  const displayGuestName = invoice.guestName || invoice.booking?.guestName || "Guest"
+  const displayGuestMobile = invoice.guestMobile || invoice.booking?.guestMobile || "-"
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <PageHeader
@@ -123,10 +110,10 @@ export function InvoiceDetailPage() {
         ]}
       >
         <div className="flex flex-wrap items-center gap-2">
-          {invoice.balanceAmount > 0 && (
+          {balance > 0 && (
             <Button
               onClick={() => {
-                setPaymentAmount(invoice.balanceAmount)
+                setPaymentAmount(balance)
                 setPaymentModalOpen(true)
               }}
             >
@@ -161,15 +148,17 @@ export function InvoiceDetailPage() {
         <div className="flex flex-col sm:flex-row justify-between pb-8 border-b gap-4">
           <div>
             <div className="flex items-center gap-2 text-primary font-bold text-xl mb-1">
-              <Building2 className="h-6 w-6" /> HotelSaaS Property
+              <Building2 className="h-6 w-6" /> {hotel?.name || "HotelSaaS Property"}
             </div>
-            <p className="text-xs text-muted-foreground">GSTIN: 27AAAAA0000A1Z5</p>
-            <p className="text-xs text-muted-foreground">Luxury Avenue, Mumbai 400001</p>
+            <p className="text-xs text-muted-foreground">GSTIN: {hotel?.gstIn || "Not Configured"}</p>
+            <p className="text-xs text-muted-foreground">
+              {hotel?.address ? `${hotel.address}, ${hotel.city}, ${hotel.state}` : "India"}
+            </p>
           </div>
 
           <div className="text-left sm:text-right">
             <h2 className="text-2xl font-black text-foreground">{invoice.invoiceNumber}</h2>
-            <p className="text-xs text-muted-foreground">Issue Date: {invoice.issueDate}</p>
+            <p className="text-xs text-muted-foreground">Issue Date: {issueDateStr}</p>
             <div className="mt-2">
               <StatusBadge status={invoice.status} />
             </div>
@@ -182,16 +171,18 @@ export function InvoiceDetailPage() {
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Billed To
             </p>
-            <p className="font-bold text-base mt-1">{invoice.booking?.guest?.fullName}</p>
-            <p className="text-xs text-muted-foreground">{invoice.booking?.guest?.mobile}</p>
-            <p className="text-xs text-muted-foreground">{invoice.booking?.guest?.email}</p>
+            <p className="font-bold text-base mt-1">{displayGuestName}</p>
+            <p className="text-xs text-muted-foreground">{displayGuestMobile}</p>
+            {invoice.guestGstin && (
+              <p className="text-xs text-muted-foreground font-mono">GSTIN: {invoice.guestGstin}</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Booking Ref
             </p>
             <p className="font-semibold text-primary text-sm mt-1">
-              {invoice.booking?.bookingReference}
+              {invoice.bookingReference || invoice.booking?.bookingReference || "-"}
             </p>
           </div>
         </div>
@@ -229,11 +220,11 @@ export function InvoiceDetailPage() {
           <div className="w-64 space-y-2 text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>Subtotal</span>
-              <span>₹{invoice.subTotal.toLocaleString("en-IN")}</span>
+              <span>₹{(invoice.subTotal ?? 0).toLocaleString("en-IN")}</span>
             </div>
             <div className="flex justify-between text-muted-foreground">
               <span>GST (CGST + SGST)</span>
-              <span>₹{invoice.taxAmount.toLocaleString("en-IN")}</span>
+              <span>₹{(invoice.taxAmount ?? 0).toLocaleString("en-IN")}</span>
             </div>
             {invoice.discountAmount > 0 && (
               <div className="flex justify-between text-emerald-600 font-medium">
@@ -243,15 +234,15 @@ export function InvoiceDetailPage() {
             )}
             <div className="flex justify-between font-bold text-base pt-2 border-t text-foreground">
               <span>Total Amount</span>
-              <span>₹{invoice.totalAmount.toLocaleString("en-IN")}</span>
+              <span>₹{(invoice.totalAmount ?? 0).toLocaleString("en-IN")}</span>
             </div>
             <div className="flex justify-between text-emerald-600 font-semibold">
               <span>Amount Paid</span>
-              <span>₹{invoice.paidAmount.toLocaleString("en-IN")}</span>
+              <span>₹{paid.toLocaleString("en-IN")}</span>
             </div>
             <div className="flex justify-between font-extrabold text-destructive border-t pt-2">
               <span>Balance Due</span>
-              <span>₹{invoice.balanceAmount.toLocaleString("en-IN")}</span>
+              <span>₹{balance.toLocaleString("en-IN")}</span>
             </div>
           </div>
         </div>
@@ -265,7 +256,7 @@ export function InvoiceDetailPage() {
                 <div key={p.id} className="py-2 flex justify-between items-center text-muted-foreground">
                   <div>
                     <span className="font-semibold text-foreground">{p.paymentMethod}</span> &bull;{" "}
-                    {new Date(p.paymentDate).toLocaleString()} &bull; Ref: {p.transactionReference || "N/A"}
+                    {new Date(p.paymentDate).toLocaleString()} &bull; Ref: {p.reference || p.transactionReference || "N/A"}
                   </div>
                   <span className="font-bold text-emerald-600">
                     ₹{p.amount.toLocaleString("en-IN")}

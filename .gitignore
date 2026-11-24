@@ -38,6 +38,9 @@ frontend/.vite/
 # TypeScript build info
 *.tsbuildinfo
 
+# Tesseract local test artifacts
+*.traineddata
+
 # ===========================
 # OS / Editor
 # ===========================
@@ -54,3 +57,4 @@ Thumbs.db
 # Docker (keep compose, ignore overrides)
 # ===========================
 docker-compose.override.yml
+
