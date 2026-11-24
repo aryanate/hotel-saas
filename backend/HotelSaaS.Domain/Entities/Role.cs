@@ -1,0 +1,15 @@
+using HotelSaaS.Domain.Common;
+
+namespace HotelSaaS.Domain.Entities;
+
+public class Role : BaseEntity
+{
+    public Guid? HotelId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public bool IsSystemRole { get; set; } = false;
+
+    // Navigation
+    public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
+    public ICollection<RolePermission> RolePermissions { get; set; } = new List<RolePermission>();
+}

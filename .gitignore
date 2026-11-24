@@ -1,0 +1,56 @@
+# ===========================
+# .NET / Backend
+# ===========================
+**/bin/
+**/obj/
+**/publish/
+*.user
+*.suo
+.vs/
+*.log
+logs/
+*.db
+*.mdf
+*.ldf
+
+# EF migrations SQLite
+*.sqlite
+
+# Uploaded files (local storage)
+**/wwwroot/uploads/
+
+# Secrets / environment overrides
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
+
+# ===========================
+# Node.js / Frontend
+# ===========================
+node_modules/
+frontend/dist/
+frontend/.env
+!frontend/.env.example
+
+# Vite cache
+frontend/.vite/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# ===========================
+# OS / Editor
+# ===========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ===========================
+# Docker (keep compose, ignore overrides)
+# ===========================
+docker-compose.override.yml

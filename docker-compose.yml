@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: hotelsaas-sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong@Password123
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql/data
+    networks:
+      - hotelsaas-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Password123' -Q 'SELECT 1' -C || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hotelsaas-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - hotelsaas-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hotelsaas-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Default=Server=sqlserver;Database=HotelSaasDb;User Id=sa;Password=YourStrong@Password123;TrustServerCertificate=True;
+      - Jwt__Secret=SuperSecretKeyForHotelSaaSDevEnvironmentOnly_AtLeast32CharsLong!
+      - Jwt__Issuer=HotelSaaS
+      - Jwt__Audience=HotelSaaSClients
+      - Storage__Provider=Local
+      - WhatsApp__Provider=Mock
+    ports:
+      - "5000:8080"
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+    networks:
+      - hotelsaas-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hotelsaas-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    networks:
+      - hotelsaas-network
+
+networks:
+  hotelsaas-network:
+    driver: bridge
+
+volumes:
+  mssql_data:
+  uploads_data:
+  logs_data:
+
